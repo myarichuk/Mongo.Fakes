@@ -97,7 +97,7 @@ public sealed class FilterCompiler
         }
 
         return array
-            .Select(d => CompileFilterBody((BsonDocument)d, docParam))
+            .Select(d => d is not BsonDocument doc ? throw new ArgumentException("$and/$or array element must be a document") : CompileFilterBody(doc, docParam))
             .Aggregate(combine);
     }
 
@@ -162,6 +162,19 @@ public sealed class FilterCompiler
         return translator.Translate(valueExpr, operatorValue);
     }
 
-    private static bool IsOperatorDocument(BsonValue value) =>
-        value is BsonDocument doc && doc.ElementCount > 0 && doc.Names.All(n => n.StartsWith('$'));
+    private static bool IsOperatorDocument(BsonValue value)
+    {
+        if (value is not BsonDocument doc || doc.ElementCount == 0)
+            return false;
+
+        var startsWithDollar = doc.Names.Select(n => n.StartsWith('$')).ToArray();
+
+        if (startsWithDollar.All(x => x))
+            return true;
+
+        if (startsWithDollar.Any(x => x))
+            throw new NotSupportedException($"unknown top level operator: {doc.Names.First(n => n.StartsWith('$'))}");
+
+        return false;
+    }
 }

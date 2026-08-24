@@ -64,30 +64,10 @@ internal sealed class UnwindStage
 
             foreach (var item in array)
             {
-                var unwoundDoc = new BsonDocument(doc);
-                SetValueByPath(unwoundDoc, _path, item);
+                var unwoundDoc = (BsonDocument)doc.DeepClone();
+                BsonPath.SetValueByPath(unwoundDoc, _path, item);
                 yield return unwoundDoc;
             }
         }
-    }
-
-    private static void SetValueByPath(BsonDocument doc, string path, BsonValue value)
-    {
-        var parts = path.Split('.');
-        BsonDocument current = doc;
-
-        for (int i = 0; i < parts.Length - 1; i++)
-        {
-            if (!current.TryGetValue(parts[i], out var fieldValue) || !fieldValue.IsBsonDocument)
-            {
-                var newDoc = new BsonDocument();
-                current[parts[i]] = newDoc;
-                current = newDoc;
-            }
-            else
-                current = (BsonDocument)fieldValue;
-        }
-
-        current[parts[^1]] = value;
     }
 }

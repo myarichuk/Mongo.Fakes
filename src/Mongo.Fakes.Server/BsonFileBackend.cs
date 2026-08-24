@@ -26,7 +26,7 @@ public sealed class BsonFileBackend : IMongoBackend
         lock (_lock)
         {
             if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var docs))
-                return docs.ToList();
+                return docs.Select(d => (BsonDocument)d.DeepClone()).ToList();
             return [];
         }
     }
@@ -274,24 +274,28 @@ public sealed class BsonFileBackend : IMongoBackend
                 try
                 {
                     var predicate = filterCompiler.Compile(filter);
-                    var matchedDocs = collDocs.Where(predicate).ToList();
-
-                    if (matchedDocs.Count > 0)
+                    var matchedIndices = new List<int>();
+                    for (int idx = 0; idx < collDocs.Count; idx++)
                     {
-                        int docsToUpdate = multi ? matchedDocs.Count : 1;
+                        if (predicate(collDocs[idx]))
+                            matchedIndices.Add(idx);
+                    }
+
+                    if (matchedIndices.Count > 0)
+                    {
+                        int docsToUpdate = multi ? matchedIndices.Count : 1;
                         for (int j = 0; j < docsToUpdate; j++)
                         {
-                            var oldDoc = matchedDocs[j];
+                            int idx = matchedIndices[j];
+                            var oldDoc = collDocs[idx];
                             var oldId = oldDoc["_id"];
                             var newDoc = new BsonDocument(replacement);
                             newDoc["_id"] = oldId;
 
-                            int idx = collDocs.IndexOf(oldDoc);
-                            if (idx >= 0)
-                            {
-                                collDocs[idx] = newDoc;
+                            if (newDoc.ToJson() != oldDoc.ToJson())
                                 modified++;
-                            }
+
+                            collDocs[idx] = newDoc;
                         }
                         matched += docsToUpdate;
                     }
@@ -309,7 +313,6 @@ public sealed class BsonFileBackend : IMongoBackend
                         collDocs.Add(newDoc);
                         upserted.Add(new BsonDocument { { "index", i }, { "_id", newDoc["_id"] } });
                         matched++;
-                        modified++;
                     }
                 }
                 catch (NotSupportedException ex)
@@ -370,18 +373,23 @@ public sealed class BsonFileBackend : IMongoBackend
                 try
                 {
                     var predicate = filterCompiler.Compile(filter);
-                    var matchedDocs = collDocs.Where(predicate).ToList();
-
-                    if (limit == 1 && matchedDocs.Count > 0)
+                    var matchedIndices = new List<int>();
+                    for (int idx = 0; idx < collDocs.Count; idx++)
                     {
-                        collDocs.Remove(matchedDocs[0]);
+                        if (predicate(collDocs[idx]))
+                            matchedIndices.Add(idx);
+                    }
+
+                    if (limit == 1 && matchedIndices.Count > 0)
+                    {
+                        collDocs.RemoveAt(matchedIndices[0]);
                         deletedCount++;
                     }
                     else if (limit == 0)
                     {
-                        foreach (var doc in matchedDocs)
-                            collDocs.Remove(doc);
-                        deletedCount += matchedDocs.Count;
+                        for (int idx = matchedIndices.Count - 1; idx >= 0; idx--)
+                            collDocs.RemoveAt(matchedIndices[idx]);
+                        deletedCount += matchedIndices.Count;
                     }
                 }
                 catch (NotSupportedException ex)
@@ -467,11 +475,23 @@ public sealed class BsonFileBackend : IMongoBackend
         return databases;
     }
 
-    private static List<BsonDocument> LoadJsonFile(string path) =>
-        File.ReadLines(path)
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .Select(BsonDocument.Parse)
-            .ToList();
+    private static List<BsonDocument> LoadJsonFile(string path)
+    {
+        var docs = new List<BsonDocument>();
+        foreach (var line in File.ReadLines(path))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var doc = BsonDocument.Parse(line);
+            if (!doc.Contains("_id"))
+                doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+
+            docs.Add(doc);
+        }
+
+        return docs;
+    }
 
     private static Dictionary<string, Dictionary<string, List<BsonDocument>>> LoadFromMongoDump(string rootFolder)
     {

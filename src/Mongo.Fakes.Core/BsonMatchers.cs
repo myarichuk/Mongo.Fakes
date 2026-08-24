@@ -14,6 +14,17 @@ public static class BsonMatchers
     private static bool MatchesScalarOrArray(BsonValue field, Func<BsonValue, bool> predicate) =>
         field is BsonArray array ? array.Any(predicate) || predicate(field) : predicate(field);
 
+    private static bool SameTypeBracket(BsonValue a, BsonValue b)
+    {
+        var aType = a.BsonType;
+        var bType = b.BsonType;
+
+        if (aType == bType)
+            return true;
+
+        return a.IsNumeric && b.IsNumeric;
+    }
+
     /// <summary>
     /// <c>{ field: value }</c> semantics: a missing field matches only when <paramref name="expected"/>
     /// is BSON null (mirrors MongoDB treating missing as null for equality purposes).
@@ -26,26 +37,31 @@ public static class BsonMatchers
     public static bool Ne(BsonValue? field, BsonValue expected) => !Eq(field, expected);
 
     public static bool Gt(BsonValue? field, BsonValue expected) =>
-        field is not null && MatchesScalarOrArray(field, v => v.CompareTo(expected) > 0);
+        field is not null && MatchesScalarOrArray(field, v => SameTypeBracket(v, expected) && v.CompareTo(expected) > 0);
 
     public static bool Gte(BsonValue? field, BsonValue expected) =>
-        field is not null && MatchesScalarOrArray(field, v => v.CompareTo(expected) >= 0);
+        field is not null && MatchesScalarOrArray(field, v => SameTypeBracket(v, expected) && v.CompareTo(expected) >= 0);
 
     public static bool Lt(BsonValue? field, BsonValue expected) =>
-        field is not null && MatchesScalarOrArray(field, v => v.CompareTo(expected) < 0);
+        field is not null && MatchesScalarOrArray(field, v => SameTypeBracket(v, expected) && v.CompareTo(expected) < 0);
 
     public static bool Lte(BsonValue? field, BsonValue expected) =>
-        field is not null && MatchesScalarOrArray(field, v => v.CompareTo(expected) <= 0);
+        field is not null && MatchesScalarOrArray(field, v => SameTypeBracket(v, expected) && v.CompareTo(expected) <= 0);
 
-    public static bool In(BsonValue? field, BsonArray values) =>
-        field is not null && MatchesScalarOrArray(field, v => values.Any(x => v.CompareTo(x) == 0));
+    public static bool In(BsonValue? field, BsonArray values)
+    {
+        if (field is not null)
+            return MatchesScalarOrArray(field, v => values.Any(x => v.CompareTo(x) == 0));
+
+        return values.Any(x => x.BsonType == BsonType.Null);
+    }
 
     public static bool Nin(BsonValue? field, BsonArray values) => !In(field, values);
 
     public static bool Exists(BsonValue? field, bool expected) => (field is not null) == expected;
 
     public static bool CheckType(BsonValue? field, BsonType[] expectedTypes) =>
-        field is not null && expectedTypes.Contains(field.BsonType);
+        field is not null && MatchesScalarOrArray(field, v => expectedTypes.Contains(v.BsonType));
 
     public static bool RegexMatch(BsonValue? field, string pattern, RegexOptions options) =>
         field is not null && MatchesScalarOrArray(field, v => v.IsString && Regex.IsMatch(v.AsString, pattern, options));

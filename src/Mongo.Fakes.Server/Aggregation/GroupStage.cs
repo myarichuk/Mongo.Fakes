@@ -50,16 +50,16 @@ internal sealed class GroupStage
     private string ComputeGroupKey(BsonDocument doc)
     {
         if (_idSpec.BsonType == BsonType.Null)
-            return "null";
+            return "null|null";
 
         if (_idSpec.IsString && _idSpec.AsString.StartsWith("$"))
         {
             var value = BsonPath.GetValue(doc, _idSpec.AsString[1..]) ?? BsonNull.Value;
-            return value.ToString() ?? "null";
+            return $"{value.BsonType}|{value.ToJson()}";
         }
 
         if (_idSpec.IsInt32 || _idSpec.IsInt64 || _idSpec.IsDouble || _idSpec.IsBoolean)
-            return _idSpec.ToString() ?? "null";
+            return $"{_idSpec.BsonType}|{_idSpec.ToJson()}";
 
         if (_idSpec.IsBsonDocument)
         {
@@ -70,17 +70,25 @@ internal sealed class GroupStage
                 if (elem.Value.IsString && elem.Value.AsString.StartsWith("$"))
                 {
                     var fieldValue = BsonPath.GetValue(doc, elem.Value.AsString[1..]) ?? BsonNull.Value;
-                    keyParts.Add($"{elem.Name}:{fieldValue}");
+                    keyParts.Add($"{elem.Name}:{fieldValue.BsonType}:{fieldValue.ToJson()}");
+                }
+                else if (elem.Value.IsString && elem.Value.AsString.StartsWith("$"))
+                {
+                    throw new NotSupportedException($"unsupported operator in $group _id: {elem.Value.AsString}");
                 }
                 else
                 {
-                    keyParts.Add($"{elem.Name}:{elem.Value}");
+                    keyParts.Add($"{elem.Name}:{elem.Value.BsonType}:{elem.Value.ToJson()}");
                 }
             }
             return string.Join("|", keyParts);
         }
 
-        return _idSpec.ToString() ?? "null";
+        var specStr = _idSpec.ToString();
+        if (specStr != null && specStr.StartsWith("$"))
+            throw new NotSupportedException($"unsupported operator in $group _id: {specStr}");
+
+        return $"{_idSpec.BsonType}|{_idSpec.ToJson()}";
     }
 
     private sealed class GroupAccumulator

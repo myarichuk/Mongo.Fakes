@@ -17,11 +17,17 @@ internal sealed class Projector
         bool? inclusionMode = null;
         foreach (var element in projectionSpec.Elements)
         {
+            if (element.Name == "_id")
+                continue;
+
+            if (!element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
+                throw new NotSupportedException("computed projection fields are not supported");
+
             bool isInclusion = element.Value.ToBoolean();
             if (inclusionMode == null)
                 inclusionMode = isInclusion;
-            else if (inclusionMode != isInclusion && element.Name != "_id")
-                throw new InvalidOperationException("Cannot mix inclusion and exclusion projections (except for _id).");
+            else if (inclusionMode != isInclusion)
+                throw new ArgumentException("Cannot mix inclusion and exclusion projections.");
         }
 
         _isInclusion = inclusionMode ?? false;
@@ -42,7 +48,7 @@ internal sealed class Projector
                 {
                     var value = BsonPath.GetValue(doc, element.Name);
                     if (value != null)
-                        result[element.Name] = value;
+                        BsonPath.SetValueByPath(result, element.Name, value);
                 }
             }
 
@@ -63,7 +69,7 @@ internal sealed class Projector
                     if (element.Name == "_id")
                         result.Remove("_id");
                     else
-                        RemoveFieldByPath(result, element.Name);
+                        BsonPath.RemoveValueByPath(result, element.Name);
                 }
             }
 
@@ -72,20 +78,5 @@ internal sealed class Projector
         }
 
         return result;
-    }
-
-    private static void RemoveFieldByPath(BsonDocument doc, string path)
-    {
-        var parts = path.Split('.');
-        BsonDocument current = doc;
-
-        for (int i = 0; i < parts.Length - 1; i++)
-        {
-            if (!current.TryGetValue(parts[i], out var value) || !value.IsBsonDocument)
-                return;
-            current = (BsonDocument)value;
-        }
-
-        current.Remove(parts[^1]);
     }
 }
