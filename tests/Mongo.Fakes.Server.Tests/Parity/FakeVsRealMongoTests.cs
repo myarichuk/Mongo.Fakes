@@ -1,4 +1,4 @@
-using EphemeralMongo;
+using Mongo2Go;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Xunit;
@@ -8,14 +8,17 @@ namespace Mongo.Fakes.Server.Tests.Parity;
 [Trait("Category", "RequiresMongod")]
 public class FakeVsRealMongoTests : IAsyncLifetime
 {
-    private IMongoRunner? _realMongoRunner;
+    private MongoDbRunner? _realMongoRunner;
     private MongoFakeServer? _fakeServer;
     private IMongoClient? _realClient;
     private IMongoClient? _fakeClient;
 
     public async Task InitializeAsync()
     {
-        _realMongoRunner = MongoRunner.Run();
+        if (!OperatingSystem.IsLinux())
+            throw new InvalidOperationException("Mongo2Go v5.x requires Linux with glibc 2.35+");
+
+        _realMongoRunner = MongoDbRunner.Start();
         _realClient = new MongoClient(_realMongoRunner.ConnectionString);
 
         var backend = new BsonFileBackend(Path.Combine(Directory.GetCurrentDirectory(), "Fixtures"));

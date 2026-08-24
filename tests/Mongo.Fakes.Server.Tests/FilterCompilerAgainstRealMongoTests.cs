@@ -1,4 +1,4 @@
-using EphemeralMongo;
+using Mongo2Go;
 using Mongo.Fakes.Core;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -12,11 +12,19 @@ namespace Mongo.Fakes.Server.Tests;
 /// </summary>
 public class FilterCompilerAgainstRealMongoTests : IDisposable
 {
-    private readonly IMongoRunner _runner = MongoRunner.Run();
+    private readonly MongoDbRunner? _runner;
+
+    public FilterCompilerAgainstRealMongoTests()
+    {
+        _runner = OperatingSystem.IsLinux() ? MongoDbRunner.Start() : null;
+    }
 
     [Fact]
     public void CompiledFilter_MatchesRealMongoResults()
     {
+        if (_runner == null)
+            throw new InvalidOperationException("Mongo2Go v5.x requires Linux with glibc 2.35+");
+
         var client = new MongoClient(_runner.ConnectionString);
         var collection = client.GetDatabase("smoketest").GetCollection<BsonDocument>("docs");
 
@@ -46,5 +54,5 @@ public class FilterCompilerAgainstRealMongoTests : IDisposable
         Assert.Equal(mongoResults, compiledResults);
     }
 
-    public void Dispose() => _runner.Dispose();
+    public void Dispose() => _runner?.Dispose();
 }
