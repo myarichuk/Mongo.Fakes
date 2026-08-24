@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.1...Mongo.Fakes-v0.2.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* add user parameter to NuGet/login for OIDC trusted publishing ([776480f](https://github.com/myarichuk/Mongo.Fakes/commit/776480fd2041d8175f7f4ab1e8307e73585d2c02))
+
 ## [0.2.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.0...Mongo.Fakes-v0.2.1) (2026-08-24)
 
 
