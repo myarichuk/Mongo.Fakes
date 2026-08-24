@@ -604,9 +604,9 @@ bool TryGetField(BsonDocument doc, string fieldPath, out BsonValue value)
 
 ### Scope
 
-- **OP_MSG (opcode 1113):** Full support, including flag handling and multiple sections
-- **OP_QUERY (opcode 2004):** Passthrough forwarding, not executed
-- **All other opcodes:** Passthrough forwarding without modification
+- **OP_MSG (opcode 2013):** Full support, including flag handling and multiple sections
+- **OP_QUERY (opcode 2004):** Handled for driver 3.x handshake (`isMaster` + `helloOk` negotiation)
+- **All other opcodes:** Connection error; not supported
 
 ### Connection Handshake
 
@@ -615,12 +615,19 @@ On connection, the client sends `hello`/`isMaster`. The server responds:
 ```csharp
 new BsonDocument
 {
-    { "ok", 1 },
+    { "ok", 1.0 },
+    { "isWritablePrimary", true },
     { "ismaster", true },
-    { "maxWireVersion", 13 },
+    { "helloOk", true },
+    { "maxWireVersion", 17 },
     { "minWireVersion", 0 },
-    { "connectionId", 1 },
-    { "serviceId", BsonNull.Value }
+    { "maxBsonObjectSize", 16777216 },
+    { "maxMessageSizeBytes", 48000000 },
+    { "maxWriteBatchSize", 100000 },
+    { "localTime", DateTime.UtcNow },
+    { "logicalSessionTimeoutMinutes", 30 },
+    { "connectionId", <atomic-counter> },
+    { "readOnly", false }
 }
 ```
 
@@ -978,10 +985,12 @@ public static class MongoFakeLoader
 // → { "ok": 1, "cursor": { "id": 0, "ns": "db.collection", "firstBatch": [...] } }
 ```
 
-### `countDocuments` / `count`
+### `count`
+
+The MongoDB server command is `count`, not `countDocuments`. The driver's `CountDocumentsAsync` translates internally to an `aggregate` pipeline with `$match` + `$group`.
 
 ```csharp
-{ "countDocuments": "collection", "query": {...} }  // → { "ok": 1, "n": 42 }
+{ "count": "collection", "query": {...} }  // → { "ok": 1.0, "n": 42 }
 ```
 
 ### `insert`
@@ -996,8 +1005,10 @@ In-memory only; not persisted to fixture files.
 
 ```csharp
 { "update": "collection", "updates": [ { "q": {...}, "u": {...} } ] }
-// → { "ok": 1, "nMatched": 1, "nModified": 1 }
+// → { "ok": 1.0, "n": 1, "nModified": 1 }
 ```
+
+Note: `n` (not `nMatched`) is the count of matched + upserted documents. `nModified` is the count of actually modified documents.
 
 Only full document replacement in v1 (`$set`-style partial updates not implemented).
 
@@ -1010,8 +1021,11 @@ Only full document replacement in v1 (`$set`-style partial updates not implement
 ### `hello` / `isMaster`
 
 ```csharp
-{ "hello": 1 }  // → { "ok": 1, "ismaster": true, "maxWireVersion": 13, "minWireVersion": 0 }
+{ "hello": 1 }  // → { "ok": 1.0, "isWritablePrimary": true, "ismaster": true, 
+                //      "helloOk": true, "maxWireVersion": 17, ... }
 ```
+
+See handshake response above for full details.
 
 ---
 
