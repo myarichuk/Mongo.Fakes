@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.3...Mongo.Fakes-v0.2.4) (2026-08-24)
+
+
+### Bug Fixes
+
+* Update NuGet user for package publishing ([ce2148a](https://github.com/myarichuk/Mongo.Fakes/commit/ce2148a0941f9004aea042f985a0cebc83b05a00))
+
 ## [0.2.3](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.2...Mongo.Fakes-v0.2.3) (2026-08-24)
 
 
