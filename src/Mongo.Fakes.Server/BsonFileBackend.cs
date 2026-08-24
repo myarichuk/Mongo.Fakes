@@ -116,17 +116,245 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleInsert(string database, BsonDocument command)
     {
-        throw new NotImplementedException("Insert is implemented in Phase 3.");
+        if (!command.TryGetValue("insert", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'insert' field.");
+
+        string collection = collValue.AsString;
+
+        if (!command.TryGetValue("documents", out var docsValue) || !docsValue.IsBsonArray)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing or invalid 'documents' field.");
+
+        var documents = (BsonArray)docsValue;
+        bool ordered = command.TryGetValue("ordered", out var ordValue) ? ordValue.ToBoolean() : true;
+
+        lock (_lock)
+        {
+            if (!_databases.TryGetValue(database, out var db))
+            {
+                db = new Dictionary<string, List<BsonDocument>>();
+                _databases[database] = db;
+            }
+
+            if (!db.TryGetValue(collection, out var collDocs))
+            {
+                collDocs = new List<BsonDocument>();
+                db[collection] = collDocs;
+            }
+
+            var writeErrors = new List<BsonDocument>();
+            int insertedCount = 0;
+
+            foreach (int i in Enumerable.Range(0, documents.Count))
+            {
+                var doc = (BsonDocument)documents[i];
+
+                if (!doc.Contains("_id"))
+                    doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+
+                var idValue = doc["_id"];
+                bool isDuplicate = collDocs.Any(d => d["_id"].Equals(idValue));
+
+                if (isDuplicate)
+                {
+                    writeErrors.Add(new BsonDocument
+                    {
+                        { "index", i },
+                        { "code", ErrorCodes.DuplicateKey },
+                        { "errmsg", $"E11000 duplicate key error" }
+                    });
+
+                    if (ordered)
+                        break;
+                }
+                else
+                {
+                    collDocs.Add(doc);
+                    insertedCount++;
+                }
+            }
+
+            var result = new BsonDocument { { "ok", 1.0 }, { "n", insertedCount } };
+            if (writeErrors.Count > 0)
+                result["writeErrors"] = new BsonArray(writeErrors);
+
+            return result;
+        }
     }
 
     private BsonDocument HandleUpdate(string database, BsonDocument command)
     {
-        throw new NotImplementedException("Update is implemented in Phase 3.");
+        if (!command.TryGetValue("update", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'update' field.");
+
+        string collection = collValue.AsString;
+
+        if (!command.TryGetValue("updates", out var updatesValue) || !updatesValue.IsBsonArray)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing or invalid 'updates' field.");
+
+        var updates = (BsonArray)updatesValue;
+        bool ordered = command.TryGetValue("ordered", out var ordValue) ? ordValue.ToBoolean() : true;
+
+        lock (_lock)
+        {
+            if (!_databases.TryGetValue(database, out var db))
+            {
+                db = new Dictionary<string, List<BsonDocument>>();
+                _databases[database] = db;
+            }
+
+            if (!db.TryGetValue(collection, out var collDocs))
+            {
+                collDocs = new List<BsonDocument>();
+                db[collection] = collDocs;
+            }
+
+            var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
+            var writeErrors = new List<BsonDocument>();
+            int matched = 0;
+            int modified = 0;
+            var upserted = new List<BsonDocument>();
+
+            foreach (int i in Enumerable.Range(0, updates.Count))
+            {
+                var updateSpec = (BsonDocument)updates[i];
+
+                if (!updateSpec.TryGetValue("q", out var qValue) || !qValue.IsBsonDocument)
+                    throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'q' in update spec.");
+
+                var filter = (BsonDocument)qValue;
+
+                if (!updateSpec.TryGetValue("u", out var uValue) || !uValue.IsBsonDocument)
+                    throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'u' in update spec.");
+
+                var replacement = (BsonDocument)uValue;
+
+                if (replacement.ElementCount > 0 && replacement.GetElement(0).Name.StartsWith("$"))
+                    throw new MongoCommandException(ErrorCodes.FailedToParse, "FailedToParse", "Update operators not supported in Phase 3.");
+
+                bool multi = updateSpec.TryGetValue("multi", out var mValue) ? mValue.ToBoolean() : false;
+                bool upsert = updateSpec.TryGetValue("upsert", out var upValue) ? upValue.ToBoolean() : false;
+
+                try
+                {
+                    var predicate = filterCompiler.Compile(filter);
+                    var matchedDocs = collDocs.Where(predicate).ToList();
+
+                    if (matchedDocs.Count > 0)
+                    {
+                        int docsToUpdate = multi ? matchedDocs.Count : 1;
+                        for (int j = 0; j < docsToUpdate; j++)
+                        {
+                            var oldDoc = matchedDocs[j];
+                            var oldId = oldDoc["_id"];
+                            var newDoc = new BsonDocument(replacement);
+                            newDoc["_id"] = oldId;
+
+                            int idx = collDocs.IndexOf(oldDoc);
+                            if (idx >= 0)
+                            {
+                                collDocs[idx] = newDoc;
+                                modified++;
+                            }
+                        }
+                        matched += docsToUpdate;
+                    }
+                    else if (upsert)
+                    {
+                        var newDoc = new BsonDocument(replacement);
+                        if (!newDoc.Contains("_id"))
+                        {
+                            if (filter.Contains("_id"))
+                                newDoc["_id"] = filter["_id"];
+                            else
+                                newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                        }
+
+                        collDocs.Add(newDoc);
+                        upserted.Add(new BsonDocument { { "index", i }, { "_id", newDoc["_id"] } });
+                        matched++;
+                        modified++;
+                    }
+                }
+                catch (NotSupportedException ex)
+                {
+                    writeErrors.Add(new BsonDocument
+                    {
+                        { "index", i },
+                        { "code", ErrorCodes.BadValue },
+                        { "errmsg", ex.Message }
+                    });
+
+                    if (ordered)
+                        break;
+                }
+            }
+
+            var result = new BsonDocument { { "ok", 1.0 }, { "n", matched }, { "nModified", modified } };
+            if (upserted.Count > 0)
+                result["upserted"] = new BsonArray(upserted);
+            if (writeErrors.Count > 0)
+                result["writeErrors"] = new BsonArray(writeErrors);
+
+            return result;
+        }
     }
 
     private BsonDocument HandleDelete(string database, BsonDocument command)
     {
-        throw new NotImplementedException("Delete is implemented in Phase 3.");
+        if (!command.TryGetValue("delete", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'delete' field.");
+
+        string collection = collValue.AsString;
+
+        if (!command.TryGetValue("deletes", out var deletesValue) || !deletesValue.IsBsonArray)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing or invalid 'deletes' field.");
+
+        var deletes = (BsonArray)deletesValue;
+        bool ordered = command.TryGetValue("ordered", out var ordValue) ? ordValue.ToBoolean() : true;
+
+        lock (_lock)
+        {
+            if (!_databases.TryGetValue(database, out var db) || !db.TryGetValue(collection, out var collDocs))
+                return new BsonDocument { { "ok", 1.0 }, { "n", 0 } };
+
+            var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
+            int deletedCount = 0;
+
+            foreach (int i in Enumerable.Range(0, deletes.Count))
+            {
+                var deleteSpec = (BsonDocument)deletes[i];
+
+                if (!deleteSpec.TryGetValue("q", out var qValue) || !qValue.IsBsonDocument)
+                    throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'q' in delete spec.");
+
+                var filter = (BsonDocument)qValue;
+                int limit = deleteSpec.TryGetValue("limit", out var lValue) ? lValue.ToInt32() : 0;
+
+                try
+                {
+                    var predicate = filterCompiler.Compile(filter);
+                    var matchedDocs = collDocs.Where(predicate).ToList();
+
+                    if (limit == 1 && matchedDocs.Count > 0)
+                    {
+                        collDocs.Remove(matchedDocs[0]);
+                        deletedCount++;
+                    }
+                    else if (limit == 0)
+                    {
+                        foreach (var doc in matchedDocs)
+                            collDocs.Remove(doc);
+                        deletedCount += matchedDocs.Count;
+                    }
+                }
+                catch (NotSupportedException ex)
+                {
+                    throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", ex.Message);
+                }
+            }
+
+            return new BsonDocument { { "ok", 1.0 }, { "n", deletedCount } };
+        }
     }
 
     private BsonDocument HandleListDatabases()
