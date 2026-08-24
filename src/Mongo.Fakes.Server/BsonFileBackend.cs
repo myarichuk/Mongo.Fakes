@@ -2,6 +2,7 @@ using MongoDB.Bson;
 using Mongo.Fakes.Core;
 using Mongo.Fakes.Server.Aggregation;
 using Mongo.Fakes.Server.Errors;
+using Mongo.Fakes.Server.Update;
 
 namespace Mongo.Fakes.Server;
 
@@ -272,9 +273,7 @@ public sealed class BsonFileBackend : IMongoBackend
                     throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'u' in update spec.");
 
                 var replacement = (BsonDocument)uValue;
-
-                if (replacement.ElementCount > 0 && replacement.GetElement(0).Name.StartsWith("$"))
-                    throw new MongoCommandException(ErrorCodes.FailedToParse, "FailedToParse", "Update operators not supported in Phase 3.");
+                bool isOperatorUpdate = replacement.ElementCount > 0 && replacement.GetElement(0).Name.StartsWith("$");
 
                 bool multi = updateSpec.TryGetValue("multi", out var mValue) ? mValue.ToBoolean() : false;
                 bool upsert = updateSpec.TryGetValue("upsert", out var upValue) ? upValue.ToBoolean() : false;
@@ -297,8 +296,17 @@ public sealed class BsonFileBackend : IMongoBackend
                             int idx = matchedIndices[j];
                             var oldDoc = collDocs[idx];
                             var oldId = oldDoc["_id"];
-                            var newDoc = new BsonDocument(replacement);
-                            newDoc["_id"] = oldId;
+
+                            BsonDocument newDoc;
+                            if (isOperatorUpdate)
+                            {
+                                newDoc = UpdateApplier.ApplyOperators(oldDoc, replacement);
+                            }
+                            else
+                            {
+                                newDoc = new BsonDocument(replacement);
+                                newDoc["_id"] = oldId;
+                            }
 
                             if (newDoc.ToJson() != oldDoc.ToJson())
                                 modified++;
@@ -309,13 +317,29 @@ public sealed class BsonFileBackend : IMongoBackend
                     }
                     else if (upsert)
                     {
-                        var newDoc = new BsonDocument(replacement);
-                        if (!newDoc.Contains("_id"))
+                        BsonDocument newDoc;
+                        if (isOperatorUpdate)
                         {
-                            if (filter.Contains("_id"))
-                                newDoc["_id"] = filter["_id"];
-                            else
-                                newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                            newDoc = new BsonDocument();
+                            if (!newDoc.Contains("_id"))
+                            {
+                                if (filter.Contains("_id"))
+                                    newDoc["_id"] = filter["_id"];
+                                else
+                                    newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                            }
+                            newDoc = UpdateApplier.ApplyOperators(newDoc, replacement);
+                        }
+                        else
+                        {
+                            newDoc = new BsonDocument(replacement);
+                            if (!newDoc.Contains("_id"))
+                            {
+                                if (filter.Contains("_id"))
+                                    newDoc["_id"] = filter["_id"];
+                                else
+                                    newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                            }
                         }
 
                         collDocs.Add(newDoc);
@@ -652,16 +676,34 @@ public sealed class BsonFileBackend : IMongoBackend
     private static List<BsonDocument> LoadJsonFile(string path)
     {
         var docs = new List<BsonDocument>();
-        foreach (var line in File.ReadLines(path))
+        var content = File.ReadAllText(path);
+
+        var trimmed = content.TrimStart();
+        if (trimmed.StartsWith("["))
         {
-            if (string.IsNullOrWhiteSpace(line))
-                continue;
+            var array = BsonDocument.Parse("{ arr: " + content + " }")["arr"].AsBsonArray;
+            foreach (var element in array)
+            {
+                var doc = element.IsBsonDocument ? (BsonDocument)element : new BsonDocument { { "value", element } };
+                if (!doc.Contains("_id"))
+                    doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
 
-            var doc = BsonDocument.Parse(line);
-            if (!doc.Contains("_id"))
-                doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                docs.Add(doc);
+            }
+        }
+        else
+        {
+            foreach (var line in content.Split('\n'))
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
 
-            docs.Add(doc);
+                var doc = BsonDocument.Parse(line);
+                if (!doc.Contains("_id"))
+                    doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+
+                docs.Add(doc);
+            }
         }
 
         return docs;
@@ -679,18 +721,25 @@ public sealed class BsonFileBackend : IMongoBackend
             var dbName = Path.GetFileName(dbDir);
             var collections = new Dictionary<string, List<BsonDocument>>();
 
+            var collectionNames = new HashSet<string>();
             foreach (var file in Directory.EnumerateFiles(dbDir))
             {
+                var fileName = Path.GetFileName(file);
+                if (fileName.EndsWith(".metadata.json"))
+                    continue;
+
                 var ext = Path.GetExtension(file).ToLowerInvariant();
                 var collectionName = Path.GetFileNameWithoutExtension(file);
 
-                if (ext == ".json")
-                {
-                    collections[collectionName] = LoadJsonFile(file);
-                }
-                else if (ext == ".bson")
+                if (ext == ".bson" && !collectionNames.Contains(collectionName))
                 {
                     collections[collectionName] = LoadBsonFile(file);
+                    collectionNames.Add(collectionName);
+                }
+                else if (ext == ".json" && !collectionNames.Contains(collectionName))
+                {
+                    collections[collectionName] = LoadJsonFile(file);
+                    collectionNames.Add(collectionName);
                 }
             }
 
@@ -729,12 +778,14 @@ public sealed class BsonFileBackend : IMongoBackend
                     using (var reader = new MongoDB.Bson.IO.BsonBinaryReader(memStream))
                     {
                         var doc = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<BsonDocument>(reader);
+                        if (!doc.Contains("_id"))
+                            doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
                         documents.Add(doc);
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    break;
+                    throw new InvalidDataException($"Error deserializing BSON document from {path} at offset {stream.Position}", ex);
                 }
             }
         }

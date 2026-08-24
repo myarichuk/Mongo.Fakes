@@ -33,6 +33,9 @@ internal sealed class AggregationPipeline
                 "$group" => ExecuteGroup(current, (BsonDocument)stageElem.Value),
                 "$unwind" => ExecuteUnwind(current, stageElem.Value),
                 "$count" => ExecuteCount(current, stageElem.Value),
+                "$addFields" => ExecuteAddFields(current, (BsonDocument)stageElem.Value),
+                "$set" => ExecuteAddFields(current, (BsonDocument)stageElem.Value),
+                "$replaceRoot" => ExecuteReplaceRoot(current, (BsonDocument)stageElem.Value),
                 _ => throw new MongoCommandException(ErrorCodes.UnrecognizedPipelineStage, "UnrecognizedPipelineStage", $"Unknown stage: {stageElem.Name}")
             };
         }
@@ -101,5 +104,33 @@ internal sealed class AggregationPipeline
         int count = data.Count();
 
         return new[] { new BsonDocument { { fieldName, count } } };
+    }
+
+    private IEnumerable<BsonDocument> ExecuteAddFields(IEnumerable<BsonDocument> data, BsonDocument fieldSpec)
+    {
+        return data.Select(doc =>
+        {
+            var result = (BsonDocument)doc.DeepClone();
+            foreach (var elem in fieldSpec.Elements)
+            {
+                var value = ExpressionEvaluator.Evaluate(elem.Value, doc);
+                BsonPath.SetValueByPath(result, elem.Name, value);
+            }
+            return result;
+        });
+    }
+
+    private IEnumerable<BsonDocument> ExecuteReplaceRoot(IEnumerable<BsonDocument> data, BsonDocument stageDoc)
+    {
+        if (!stageDoc.TryGetValue("newRoot", out var rootExpr))
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "$replaceRoot requires 'newRoot' field");
+
+        return data.Select(doc =>
+        {
+            var newRoot = ExpressionEvaluator.Evaluate(rootExpr, doc);
+            if (!newRoot.IsBsonDocument)
+                throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "$replaceRoot newRoot must be a document");
+            return (BsonDocument)newRoot;
+        });
     }
 }
