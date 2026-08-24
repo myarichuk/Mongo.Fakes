@@ -61,7 +61,7 @@ jobs:
       - name: NuGet login (OIDC trusted publishing)
         uses: NuGet/login@v1
         with:
-          user: michael.yarichuk
+          user: Mongo.Fakes
 
       - name: Push packages
         run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate
