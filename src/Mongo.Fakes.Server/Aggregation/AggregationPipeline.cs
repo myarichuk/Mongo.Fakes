@@ -32,6 +32,7 @@ internal sealed class AggregationPipeline
                 "$limit" => ExecuteLimit(current, stageElem.Value),
                 "$group" => ExecuteGroup(current, (BsonDocument)stageElem.Value),
                 "$unwind" => ExecuteUnwind(current, stageElem.Value),
+                "$count" => ExecuteCount(current, stageElem.Value),
                 _ => throw new MongoCommandException(ErrorCodes.UnrecognizedPipelineStage, "UnrecognizedPipelineStage", $"Unknown stage: {stageElem.Name}")
             };
         }
@@ -89,5 +90,16 @@ internal sealed class AggregationPipeline
     {
         var unwindStage = new UnwindStage(spec);
         return unwindStage.Execute(data);
+    }
+
+    private IEnumerable<BsonDocument> ExecuteCount(IEnumerable<BsonDocument> data, BsonValue countValue)
+    {
+        if (!countValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "$count must be a string");
+
+        string fieldName = countValue.AsString;
+        int count = data.Count();
+
+        return new[] { new BsonDocument { { fieldName, count } } };
     }
 }
