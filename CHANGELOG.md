@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.5](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.4...Mongo.Fakes-v0.2.5) (2026-08-24)
+
+
+### Bug Fixes
+
+* OIDC nuget username ([6c6cd9f](https://github.com/myarichuk/Mongo.Fakes/commit/6c6cd9fb7b6024a04d7a2cbd1a80ff434c2a3f27))
+
 ## [0.2.4](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.3...Mongo.Fakes-v0.2.4) (2026-08-24)
 
 
