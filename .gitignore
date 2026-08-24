@@ -36,6 +36,9 @@ msbuild.wrn
 # VS Code
 .vscode/
 
+# Claude Code
+.serena/
+
 # NuGet
 *.nupkg
 *.snupkg

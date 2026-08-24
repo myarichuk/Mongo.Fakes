@@ -50,6 +50,13 @@ public sealed class MongoFakeServer(IMongoBackend backend, int port = 0) : IAsyn
         catch (OperationCanceledException)
         {
         }
+        catch (SocketException)
+        {
+            // Listener was stopped (e.g. during DisposeAsync) while an accept was pending.
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -79,6 +86,12 @@ public sealed class MongoFakeServer(IMongoBackend backend, int port = 0) : IAsyn
         {
         }
         catch (TimeoutException)
+        {
+        }
+        catch (SocketException)
+        {
+        }
+        catch (IOException)
         {
         }
 
