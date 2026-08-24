@@ -23,7 +23,7 @@ internal sealed class CommandRouter
         return commandName switch
         {
             "hello" => HandleHello(command),
-            "ismaster" or "isMaster" => HandleHello(command),
+            "ismaster" => HandleHello(command),
             "ping" => HandlePing(),
             "buildinfo" => HandleBuildInfo(),
             "getparameter" => HandleGetParameter(command),
@@ -54,7 +54,7 @@ internal sealed class CommandRouter
         return new BsonDocument
         {
             { "ok", 1.0 },
-            { "version", "4.4.0" },
+            { "version", "6.0.0" },
             { "gitVersion", "fake" }
         };
     }

@@ -6,7 +6,14 @@
       "package-name": "Mongo.Fakes",
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": false
+      "bump-patch-for-minor-pre-major": false,
+      "extra-files": [
+        {
+          "type": "xml",
+          "file": "Directory.Build.props",
+          "xpath": "/Project/PropertyGroup/VersionPrefix"
+        }
+      ]
     }
   }
 }

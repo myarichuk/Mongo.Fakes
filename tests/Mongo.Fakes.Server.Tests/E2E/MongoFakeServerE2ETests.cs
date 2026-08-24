@@ -120,7 +120,8 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
             new() { { "$match", new MongoDB.Bson.BsonDocument { { "category", "A" } } } }
         };
 
-        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.ToListAsync();
+        var cursor = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.ToListAsync();
         Assert.Equal(2, result.Count);
         Assert.True(result.All(d => d["category"].AsString == "A"));
     }
@@ -142,7 +143,8 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
             new() { { "$limit", 2 } }
         };
 
-        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.ToListAsync();
+        var cursor = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.ToListAsync();
         Assert.Equal(2, result.Count);
         Assert.Equal(4, result[0]["value"].AsInt32);
         Assert.Equal(3, result[1]["value"].AsInt32);
@@ -161,7 +163,8 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
             new() { { "$project", new MongoDB.Bson.BsonDocument { { "name", 1 }, { "age", 1 } } } }
         };
 
-        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.FirstAsync();
+        var cursor = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.FirstAsync();
         Assert.Equal("Alice", result["name"].AsString);
         Assert.Equal(30, result["age"].AsInt32);
         Assert.False(result.Contains("secret"));

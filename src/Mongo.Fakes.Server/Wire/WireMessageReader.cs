@@ -39,18 +39,3 @@ internal sealed class WireMessageReader
         return body;
     }
 }
-
-internal static class NetworkStreamExtensions
-{
-    public static async Task ReadExactlyAsync(this NetworkStream stream, byte[] buffer, int offset, int count, CancellationToken ct)
-    {
-        int totalRead = 0;
-        while (totalRead < count)
-        {
-            int bytesRead = await stream.ReadAsync(buffer, offset + totalRead, count - totalRead, ct).ConfigureAwait(false);
-            if (bytesRead == 0)
-                throw new IOException("End of stream reached unexpectedly.");
-            totalRead += bytesRead;
-        }
-    }
-}

@@ -2,6 +2,7 @@ using Mongo2Go;
 using Mongo.Fakes.Core;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Xunit;
 
 namespace Mongo.Fakes.Server.Tests;
 
@@ -20,6 +21,7 @@ public class FilterCompilerAgainstRealMongoTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "RequiresMongod")]
     public void CompiledFilter_MatchesRealMongoResults()
     {
         if (_runner == null)

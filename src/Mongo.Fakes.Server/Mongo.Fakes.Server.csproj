@@ -9,11 +9,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <PackageId>Mongo.Fakes.Server</PackageId>
     <Description>In-process MongoDB wire-protocol (OP_MSG) test double: serves fixture data to the real MongoDB C# driver without a mongod process.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>mongodb;testing;mock;test-double;wire-protocol</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="MongoDB.Bson" />
-    <PackageReference Include="MongoDB.Driver" />
   </ItemGroup>
 
 </Project>

@@ -5,15 +5,6 @@ using Mongo.Fakes.Server.Wire;
 
 namespace Mongo.Fakes.Server;
 
-internal static class TcpClientExtensions
-{
-    public static void SetNoDelay(this TcpClient client)
-    {
-        client.NoDelay = true;
-    }
-}
-
-
 internal sealed class ClientConnection
 {
     private readonly TcpClient _client;
