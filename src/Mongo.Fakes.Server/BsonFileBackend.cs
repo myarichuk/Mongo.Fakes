@@ -14,6 +14,13 @@ public sealed class BsonFileBackend : IMongoBackend
         _databases = LoadAllFixtures(fixtureRootFolder);
     }
 
+    public BsonFileBackend(string fixtureRootFolder, bool loadFromMongoDump)
+    {
+        _databases = loadFromMongoDump
+            ? LoadFromMongoDump(fixtureRootFolder)
+            : LoadAllFixtures(fixtureRootFolder);
+    }
+
     public IReadOnlyList<BsonDocument> GetCollection(string database, string collection)
     {
         lock (_lock)
@@ -465,4 +472,79 @@ public sealed class BsonFileBackend : IMongoBackend
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .Select(BsonDocument.Parse)
             .ToList();
+
+    private static Dictionary<string, Dictionary<string, List<BsonDocument>>> LoadFromMongoDump(string rootFolder)
+    {
+        var databases = new Dictionary<string, Dictionary<string, List<BsonDocument>>>();
+
+        if (!Directory.Exists(rootFolder))
+            return databases;
+
+        foreach (var dbDir in Directory.EnumerateDirectories(rootFolder))
+        {
+            var dbName = Path.GetFileName(dbDir);
+            var collections = new Dictionary<string, List<BsonDocument>>();
+
+            foreach (var file in Directory.EnumerateFiles(dbDir))
+            {
+                var ext = Path.GetExtension(file).ToLowerInvariant();
+                var collectionName = Path.GetFileNameWithoutExtension(file);
+
+                if (ext == ".json")
+                {
+                    collections[collectionName] = LoadJsonFile(file);
+                }
+                else if (ext == ".bson")
+                {
+                    collections[collectionName] = LoadBsonFile(file);
+                }
+            }
+
+            if (collections.Count > 0)
+                databases[dbName] = collections;
+        }
+
+        return databases;
+    }
+
+    private static List<BsonDocument> LoadBsonFile(string path)
+    {
+        var documents = new List<BsonDocument>();
+
+        using (var stream = File.OpenRead(path))
+        {
+            while (stream.Position < stream.Length)
+            {
+                byte[] lengthBytes = new byte[4];
+                if (stream.Read(lengthBytes, 0, 4) != 4)
+                    break;
+
+                int docLength = BitConverter.ToInt32(lengthBytes, 0);
+                if (docLength < 5)
+                    break;
+
+                byte[] docBytes = new byte[docLength];
+                Array.Copy(lengthBytes, docBytes, 4);
+
+                if (stream.Read(docBytes, 4, docLength - 4) != docLength - 4)
+                    break;
+
+                try
+                {
+                    using (var memStream = new System.IO.MemoryStream(docBytes))
+                    using (var reader = new MongoDB.Bson.IO.BsonBinaryReader(memStream))
+                    {
+                        var doc = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<BsonDocument>(reader);
+                        documents.Add(doc);
+                    }
+                }
+                catch
+                {
+                    break;
+                }
+            }
+        }
+
+        return documents;
+    }
 }

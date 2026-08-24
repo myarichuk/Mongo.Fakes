@@ -16,6 +16,21 @@ Mongo.Fakes is two things sharing one filter engine:
 implemented once and shared by both the lightweight in-memory predicate mode and the
 wire-protocol double.
 
+## When to Use Mongo.Fakes
+
+| Aspect | Mongo.Fakes | EphemeralMongo | Testcontainers |
+|--------|-----------|-----------------|-----------------|
+| **Speed** | ⚡ Very fast (in-process) | 🐢 Slower (real binary) | 🐢 Slower (Docker) |
+| **Setup** | 0 ms, no dependencies | ~100 MB binary download | Docker required |
+| **Compatibility** | 95% (queries, writes, aggregations) | 100% (full MongoDB) | 100% (full MongoDB) |
+| **Fixture Setup** | Easy (JSON/BSON files) | Any method | Any method |
+| **Best For** | Unit tests, CI speed, fixture validation | Integration tests needing 100% parity | Feature demos, complex scenarios |
+| **Test Database Reuse** | ✓ Snapshot real data as BSON | ✓ Full compatibility | ✓ Full compatibility |
+
+**Choose Mongo.Fakes if:** Your tests don't use unsupported operators, you want instant startup, and you're testing driver integration paths rather than advanced MongoDB features.
+
+**Choose EphemeralMongo/Testcontainers if:** You need 100% MongoDB compatibility or are testing features like transactions, geospatial queries, or complex aggregations.
+
 ## Status
 
 Early scaffold — see [`docs/SPEC.md`](docs/SPEC.md) for the design specification and
@@ -29,6 +44,45 @@ current scope.
 | `Mongo.Fakes.Server` | Wire-protocol test double server backed by fixture files |
 
 ## Usage
+
+### Loading Fixture Data
+
+#### From Local JSON/BSON Files
+
+Create a folder structure matching your database layout:
+```
+Fixtures/
+  myapp/
+    users.json
+    products.json
+  other_db/
+    items.json
+```
+
+Each line in the JSON files is a BSON document:
+```json
+{"_id": 1, "name": "Alice", "email": "alice@example.com"}
+{"_id": 2, "name": "Bob", "email": "bob@example.com"}
+```
+
+#### From MongoDB Dump (mongodump)
+
+Import real exported data using `mongodump`:
+
+```bash
+mongodump --uri "mongodb://prod-server/myapp" --out ./dump
+```
+
+This creates a structure like: `dump/myapp/users.bson`, `dump/myapp/products.bson`, etc.
+
+Then load it in your tests:
+```csharp
+var backend = new BsonFileBackend(Path.Combine(
+    Directory.GetCurrentDirectory(), "dump"), loadFromMongoDump: true);
+```
+
+The server automatically handles both `.json` and `.bson` files, making it easy to snapshot
+real production data as test fixtures.
 
 ### Integration Tests with xUnit
 
