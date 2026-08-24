@@ -30,7 +30,7 @@ jobs:
 
   publish-nuget:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true' && vars.NUGET_TRUSTED_PUBLISHING_READY == 'true'
+    if: (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') && vars.NUGET_TRUSTED_PUBLISHING_READY == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || needs.release-please.outputs.tag_name }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
