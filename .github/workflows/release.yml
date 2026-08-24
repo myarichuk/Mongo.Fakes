@@ -59,9 +59,10 @@ jobs:
       # enablement time (https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)
       # before removing this comment — the action/step below is a placeholder shape.
       - name: NuGet login (OIDC trusted publishing)
+        id: login
         uses: NuGet/login@v1
         with:
           user: michael.yarichuk
 
       - name: Push packages
-        run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --skip-duplicate
