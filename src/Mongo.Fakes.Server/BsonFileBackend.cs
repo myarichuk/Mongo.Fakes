@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using Mongo.Fakes.Core;
 using Mongo.Fakes.Server.Aggregation;
 using Mongo.Fakes.Server.Errors;
 
@@ -50,6 +51,13 @@ public sealed class BsonFileBackend : IMongoBackend
                 "delete" => HandleDelete(database, command),
                 "listdatabases" => HandleListDatabases(),
                 "listcollections" => HandleListCollections(database),
+                "drop" => HandleDrop(database, command),
+                "dropdatabase" => HandleDropDatabase(database),
+                "findandmodify" => HandleFindAndModify(database, command),
+                "distinct" => HandleDistinct(database, command),
+                "createindexes" => HandleNoOp("createindexes"),
+                "listindexes" => HandleNoOp("listindexes"),
+                "create" => HandleNoOp("create"),
                 _ => throw new MongoCommandException(ErrorCodes.CommandNotFound, "CommandNotFound", $"no such cmd: {commandName}")
             };
         }
@@ -445,6 +453,172 @@ public sealed class BsonFileBackend : IMongoBackend
                 }}
             };
         }
+    }
+
+    private BsonDocument HandleDrop(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("drop", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'drop' field.");
+
+        string collection = collValue.AsString;
+
+        lock (_lock)
+        {
+            if (_databases.TryGetValue(database, out var db))
+            {
+                db.Remove(collection);
+            }
+
+            return new BsonDocument { { "ok", 1.0 } };
+        }
+    }
+
+    private BsonDocument HandleDropDatabase(string database)
+    {
+        lock (_lock)
+        {
+            _databases.Remove(database);
+            return new BsonDocument { { "ok", 1.0 } };
+        }
+    }
+
+    private BsonDocument HandleDistinct(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("distinct", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'distinct' field.");
+
+        if (!command.TryGetValue("key", out var keyValue) || !keyValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'key' field.");
+
+        string collection = collValue.AsString;
+        string key = keyValue.AsString;
+
+        var data = GetCollection(database, collection);
+        var filter = command.TryGetValue("query", out var f) ? (BsonDocument)f : new BsonDocument();
+
+        var executor = new BsonQueryExecutor();
+        var results = executor.ExecuteFind(data, filter, null, null, 0, 0).ToList();
+
+        var distinctValues = new HashSet<string>();
+        foreach (var doc in results)
+        {
+            var value = BsonPath.GetValue(doc, key);
+            if (value != null)
+                distinctValues.Add(value.ToJson());
+        }
+
+        return new BsonDocument
+        {
+            { "ok", 1.0 },
+            { "values", new BsonArray(distinctValues.Select(v => BsonValue.Create(v))) }
+        };
+    }
+
+    private BsonDocument HandleFindAndModify(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("findandmodify", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'findandmodify' field.");
+
+        string collection = collValue.AsString;
+        var filter = command.TryGetValue("query", out var qValue) ? (BsonDocument)qValue : new BsonDocument();
+        var sort = command.TryGetValue("sort", out var sValue) ? (BsonDocument)sValue : null;
+
+        var data = GetCollection(database, collection);
+        var executor = new BsonQueryExecutor();
+        var results = executor.ExecuteFind(data, filter, null, sort, 0, 1).ToList();
+
+        if (results.Count == 0)
+            return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
+
+        var foundDoc = results[0];
+        var returnValue = new BsonDocument(foundDoc);
+
+        bool isUpdate = command.Contains("update");
+        bool isRemove = command.TryGetValue("remove", out var removeValue) && removeValue.ToBoolean();
+
+        if (isUpdate && command.TryGetValue("update", out var updateValue))
+        {
+            var update = (BsonDocument)updateValue;
+            if (update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$"))
+                throw new NotSupportedException("Update operators are not yet supported in findAndModify.");
+
+            var newDoc = new BsonDocument(update);
+            newDoc["_id"] = foundDoc["_id"];
+
+            var indices = new List<int>();
+            var predicate = new FilterCompiler().Compile(filter);
+            for (int idx = 0; idx < data.Count; idx++)
+            {
+                if (predicate(data[idx]))
+                {
+                    indices.Add(idx);
+                    break;
+                }
+            }
+
+            if (indices.Count > 0)
+            {
+                var allDocs = GetCollection(database, collection);
+                lock (_lock)
+                {
+                    if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
+                    {
+                        var origPredicate = new FilterCompiler().Compile(filter);
+                        for (int idx = collDocs.Count - 1; idx >= 0; idx--)
+                        {
+                            if (origPredicate(collDocs[idx]))
+                            {
+                                collDocs[idx] = newDoc;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (isRemove)
+        {
+            var indices = new List<int>();
+            var predicate = new FilterCompiler().Compile(filter);
+            for (int idx = 0; idx < data.Count; idx++)
+            {
+                if (predicate(data[idx]))
+                {
+                    indices.Add(idx);
+                    break;
+                }
+            }
+
+            if (indices.Count > 0)
+            {
+                lock (_lock)
+                {
+                    if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
+                    {
+                        var origPredicate = new FilterCompiler().Compile(filter);
+                        for (int idx = collDocs.Count - 1; idx >= 0; idx--)
+                        {
+                            if (origPredicate(collDocs[idx]))
+                            {
+                                collDocs.RemoveAt(idx);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return new BsonDocument
+        {
+            { "ok", 1.0 },
+            { "value", returnValue }
+        };
+    }
+
+    private static BsonDocument HandleNoOp(string commandName)
+    {
+        return new BsonDocument { { "ok", 1.0 } };
     }
 
     private static Dictionary<string, Dictionary<string, List<BsonDocument>>> LoadAllFixtures(string rootFolder)
