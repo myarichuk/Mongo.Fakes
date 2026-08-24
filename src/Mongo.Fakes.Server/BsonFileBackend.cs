@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using Mongo.Fakes.Server.Aggregation;
 using Mongo.Fakes.Server.Errors;
 
 namespace Mongo.Fakes.Server;
@@ -111,7 +112,36 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleAggregate(string database, BsonDocument command)
     {
-        throw new NotImplementedException("Aggregation is implemented in Phase 4.");
+        if (!command.TryGetValue("aggregate", out var collValue))
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'aggregate' field.");
+
+        if (collValue.IsInt32 && collValue.AsInt32 == 1)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Cannot run aggregation at database level");
+
+        if (!collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "'aggregate' must be a string or 1");
+
+        string collection = collValue.AsString;
+
+        if (!command.TryGetValue("pipeline", out var pipelineValue) || !pipelineValue.IsBsonArray)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing or invalid 'pipeline' field");
+
+        var pipeline = (BsonArray)pipelineValue;
+        var data = GetCollection(database, collection);
+
+        var executor = new AggregationPipeline();
+        var results = executor.Execute(data, pipeline).ToList();
+
+        return new BsonDocument
+        {
+            { "ok", 1.0 },
+            { "cursor", new BsonDocument
+            {
+                { "id", 0L },
+                { "ns", $"{database}.{collection}" },
+                { "firstBatch", new BsonArray(results) }
+            }}
+        };
     }
 
     private BsonDocument HandleInsert(string database, BsonDocument command)

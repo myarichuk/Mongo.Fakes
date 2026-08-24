@@ -104,4 +104,66 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
         Assert.Single(found);
         Assert.Equal("doc2", found[0]["_id"].AsString);
     }
+
+    [Fact]
+    public async Task Aggregate_Match_Should_Filter_Documents()
+    {
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("testcoll5");
+        var doc1 = new MongoDB.Bson.BsonDocument { { "_id", "doc1" }, { "category", "A" }, { "value", 10 } };
+        var doc2 = new MongoDB.Bson.BsonDocument { { "_id", "doc2" }, { "category", "B" }, { "value", 20 } };
+        var doc3 = new MongoDB.Bson.BsonDocument { { "_id", "doc3" }, { "category", "A" }, { "value", 30 } };
+
+        await collection.InsertManyAsync(new[] { doc1, doc2, doc3 });
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() { { "$match", new MongoDB.Bson.BsonDocument { { "category", "A" } } } }
+        };
+
+        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.ToListAsync();
+        Assert.Equal(2, result.Count);
+        Assert.True(result.All(d => d["category"].AsString == "A"));
+    }
+
+    [Fact]
+    public async Task Aggregate_Sort_Skip_Limit_Should_Order_And_Paginate()
+    {
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("testcoll6");
+        var docs = Enumerable.Range(1, 5)
+            .Select(i => new MongoDB.Bson.BsonDocument { { "_id", $"doc{i}" }, { "value", i } })
+            .ToList();
+
+        await collection.InsertManyAsync(docs);
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() { { "$sort", new MongoDB.Bson.BsonDocument { { "value", -1 } } } },
+            new() { { "$skip", 1 } },
+            new() { { "$limit", 2 } }
+        };
+
+        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.ToListAsync();
+        Assert.Equal(2, result.Count);
+        Assert.Equal(4, result[0]["value"].AsInt32);
+        Assert.Equal(3, result[1]["value"].AsInt32);
+    }
+
+    [Fact]
+    public async Task Aggregate_Project_Should_Include_Selected_Fields()
+    {
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("testcoll7");
+        var doc = new MongoDB.Bson.BsonDocument { { "_id", "doc1" }, { "name", "Alice" }, { "secret", "hidden" }, { "age", 30 } };
+
+        await collection.InsertOneAsync(doc);
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() { { "$project", new MongoDB.Bson.BsonDocument { { "name", 1 }, { "age", 1 } } } }
+        };
+
+        var result = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline).Result.FirstAsync();
+        Assert.Equal("Alice", result["name"].AsString);
+        Assert.Equal(30, result["age"].AsInt32);
+        Assert.False(result.Contains("secret"));
+    }
 }
