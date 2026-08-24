@@ -16,7 +16,10 @@ public class FakeVsRealMongoTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         if (!OperatingSystem.IsLinux())
-            throw new InvalidOperationException("Mongo2Go v5.x requires Linux with glibc 2.35+");
+            throw new InvalidOperationException(
+                "Mongo2Go ships Windows binaries and starts mongod fine in a plain console app on this " +
+                "machine, but mongod never comes up when launched from a VSTest testhost process on Windows " +
+                "(connection refused, root cause not identified). Parity tests only run reliably on Linux for now.");
 
         _realMongoRunner = MongoDbRunner.Start();
         _realClient = new MongoClient(_realMongoRunner.ConnectionString);

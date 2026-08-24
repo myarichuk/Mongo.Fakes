@@ -23,7 +23,10 @@ public class FilterCompilerAgainstRealMongoTests : IDisposable
     public void CompiledFilter_MatchesRealMongoResults()
     {
         if (_runner == null)
-            throw new InvalidOperationException("Mongo2Go v5.x requires Linux with glibc 2.35+");
+            throw new InvalidOperationException(
+                "Mongo2Go ships Windows binaries and starts mongod fine in a plain console app on this " +
+                "machine, but mongod never comes up when launched from a VSTest testhost process on Windows " +
+                "(connection refused, root cause not identified). This test only runs reliably on Linux for now.");
 
         var client = new MongoClient(_runner.ConnectionString);
         var collection = client.GetDatabase("smoketest").GetCollection<BsonDocument>("docs");

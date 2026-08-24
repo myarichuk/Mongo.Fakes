@@ -166,4 +166,27 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
         Assert.Equal(30, result["age"].AsInt32);
         Assert.False(result.Contains("secret"));
     }
+
+    [Fact]
+    public async Task CountDocuments_Should_Use_Group_Sum_Pipeline()
+    {
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("countcoll");
+        await collection.InsertManyAsync(
+        [
+            new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "status", "active" } },
+            new MongoDB.Bson.BsonDocument { { "_id", 2 }, { "status", "active" } },
+            new MongoDB.Bson.BsonDocument { { "_id", 3 }, { "status", "inactive" } },
+        ]);
+
+        long total = await collection.CountDocumentsAsync(MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Empty);
+        Assert.Equal(3, total);
+
+        long filtered = await collection.CountDocumentsAsync(
+            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("status", "active"));
+        Assert.Equal(2, filtered);
+
+        long none = await collection.CountDocumentsAsync(
+            MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("status", "missing"));
+        Assert.Equal(0, none);
+    }
 }

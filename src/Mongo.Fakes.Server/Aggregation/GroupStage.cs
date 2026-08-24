@@ -41,7 +41,9 @@ internal sealed class GroupStage
 
         foreach (var key in keyOrder)
         {
-            yield return groups[key].Build(_idSpec, key);
+            var result = groups[key].Build(_idSpec, key);
+            groups[key].ApplyAccumulators(result, _accumulators);
+            yield return result;
         }
     }
 
@@ -115,6 +117,104 @@ internal sealed class GroupStage
                 result["_id"] = idSpec;
 
             return result;
+        }
+
+        public void ApplyAccumulators(BsonDocument result, Dictionary<string, BsonValue> accumulators)
+        {
+            foreach (var (fieldName, accSpec) in accumulators)
+            {
+                if (!accSpec.IsBsonDocument || ((BsonDocument)accSpec).ElementCount != 1)
+                    throw new NotSupportedException($"Unsupported accumulator specification for field '{fieldName}'.");
+
+                var accElem = ((BsonDocument)accSpec).GetElement(0);
+                result[fieldName] = accElem.Name switch
+                {
+                    "$sum" => Sum(accElem.Value),
+                    "$avg" => Avg(accElem.Value),
+                    "$min" => MinMax(accElem.Value, min: true),
+                    "$max" => MinMax(accElem.Value, min: false),
+                    "$first" => _docs.Count > 0 ? ExpressionEvaluator.Evaluate(accElem.Value, _docs[0]) : BsonNull.Value,
+                    "$last" => _docs.Count > 0 ? ExpressionEvaluator.Evaluate(accElem.Value, _docs[^1]) : BsonNull.Value,
+                    "$push" => new BsonArray(_docs.Select(d => ExpressionEvaluator.Evaluate(accElem.Value, d))),
+                    "$addToSet" => new BsonArray(_docs.Select(d => ExpressionEvaluator.Evaluate(accElem.Value, d)).Distinct()),
+                    _ => throw new NotSupportedException($"Unsupported accumulator: {accElem.Name}")
+                };
+            }
+        }
+
+        private BsonValue Sum(BsonValue expr)
+        {
+            long intTotal = 0;
+            double doubleTotal = 0;
+            bool isDouble = false;
+            bool overflowedInt64 = false;
+
+            foreach (var doc in _docs)
+            {
+                var value = ExpressionEvaluator.Evaluate(expr, doc);
+                if (!value.IsNumeric)
+                    continue;
+
+                if (!isDouble && (value.IsInt32 || value.IsInt64))
+                {
+                    long asLong = value.ToInt64();
+                    try
+                    {
+                        intTotal = checked(intTotal + asLong);
+                    }
+                    catch (OverflowException)
+                    {
+                        overflowedInt64 = true;
+                    }
+                }
+                else
+                {
+                    isDouble = true;
+                }
+
+                doubleTotal += value.ToDouble();
+            }
+
+            if (isDouble || overflowedInt64)
+                return new BsonDouble(doubleTotal);
+
+            return intTotal is >= int.MinValue and <= int.MaxValue
+                ? new BsonInt32((int)intTotal)
+                : new BsonInt64(intTotal);
+        }
+
+        private BsonValue Avg(BsonValue expr)
+        {
+            if (_docs.Count == 0)
+                return BsonNull.Value;
+
+            double total = 0;
+            int count = 0;
+            foreach (var doc in _docs)
+            {
+                var value = ExpressionEvaluator.Evaluate(expr, doc);
+                if (value.IsNumeric)
+                {
+                    total += value.ToDouble();
+                    count++;
+                }
+            }
+            return count == 0 ? BsonNull.Value : new BsonDouble(total / count);
+        }
+
+        private BsonValue MinMax(BsonValue expr, bool min)
+        {
+            BsonValue? result = null;
+            foreach (var doc in _docs)
+            {
+                var value = ExpressionEvaluator.Evaluate(expr, doc);
+                if (value.BsonType == BsonType.Null)
+                    continue;
+
+                if (result == null || (min ? value.CompareTo(result) < 0 : value.CompareTo(result) > 0))
+                    result = value;
+            }
+            return result ?? BsonNull.Value;
         }
     }
 }
