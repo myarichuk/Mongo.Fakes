@@ -60,6 +60,8 @@ jobs:
       # before removing this comment — the action/step below is a placeholder shape.
       - name: NuGet login (OIDC trusted publishing)
         uses: NuGet/login@v1
+        with:
+          user: __OIDC__
 
       - name: Push packages
         run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate
