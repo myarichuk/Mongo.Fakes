@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.0...Mongo.Fakes-v0.2.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* test release automation ([75d64ec](https://github.com/myarichuk/Mongo.Fakes/commit/75d64ec4deecb7aa3a2ba6e389c521d08ab0edd9))
+
 ## [0.2.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.1.0...Mongo.Fakes-v0.2.0) (2026-08-24)
 
 
