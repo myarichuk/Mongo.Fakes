@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.5...Mongo.Fakes-v0.2.6) (2026-08-24)
+
+
+### Bug Fixes
+
+* OIDC flow vs nuget ([f1fc46c](https://github.com/myarichuk/Mongo.Fakes/commit/f1fc46cb464f3fca74067e21dcfb6db7cc94aaf6))
+
 ## [0.2.5](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.4...Mongo.Fakes-v0.2.5) (2026-08-24)
 
 
