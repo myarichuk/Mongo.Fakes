@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Mongo.Fakes.Core/Mongo.Fakes.Core.csproj" />
+    <Project Path="src/Mongo.Fakes.Server/Mongo.Fakes.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Mongo.Fakes.Core.Tests/Mongo.Fakes.Core.Tests.csproj" />
+    <Project Path="tests/Mongo.Fakes.Server.Tests/Mongo.Fakes.Server.Tests.csproj" />
+  </Folder>
+</Solution>

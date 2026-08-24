@@ -1,0 +1,24 @@
+<Project>
+
+  <PropertyGroup>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Bumped by release-please based on conventional commits; see .github/workflows/release.yml -->
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>Michael Yarichuk</Authors>
+    <Company>Michael Yarichuk</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/myarichuk/Mongo.Fakes</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/myarichuk/Mongo.Fakes</RepositoryUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+</Project>

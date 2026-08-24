@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # Maintains a "Release PR" that accumulates conventional-commit changes since the
+      # last release. Merging that PR (or this running again after merge) bumps the
+      # version, updates CHANGELOG.md, tags, and creates the GitHub Release with the
+      # generated changelog as its body — no separate changelog/release steps needed.
+      - name: release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish-nuget:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' && vars.NUGET_TRUSTED_PUBLISHING_READY == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Pack
+        run: dotnet pack --configuration Release --output ./artifacts
+
+      # NOTE: NuGet Trusted Publishing (OIDC) setup is a maintainer prerequisite — see
+      # CONTRIBUTING.md#publishing-maintainers. This job only runs once the
+      # `NUGET_TRUSTED_PUBLISHING_READY` repo variable is set to "true", which should
+      # happen after Trusted Publishing is registered on nuget.org for these package IDs.
+      # Verify the current recommended OIDC exchange step against NuGet's docs at
+      # enablement time (https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)
+      # before removing this comment — the action/step below is a placeholder shape.
+      - name: NuGet login (OIDC trusted publishing)
+        uses: NuGet/login@v1
+
+      - name: Push packages
+        run: dotnet nuget push "./artifacts/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate

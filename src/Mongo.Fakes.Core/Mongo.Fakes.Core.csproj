@@ -1,0 +1,14 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PackageId>Mongo.Fakes.Core</PackageId>
+    <Description>BSON-native MongoDB filter compiler: compiles MongoDB filter syntax to LINQ predicates over BsonDocument.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Bson" />
+  </ItemGroup>
+
+</Project>

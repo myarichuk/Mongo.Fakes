@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mongo.Fakes.Core\Mongo.Fakes.Core.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PackageId>Mongo.Fakes.Server</PackageId>
+    <Description>In-process MongoDB wire-protocol (OP_MSG) test double: serves fixture data to the real MongoDB C# driver without a mongod process.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Bson" />
+    <PackageReference Include="MongoDB.Driver" />
+  </ItemGroup>
+
+</Project>
