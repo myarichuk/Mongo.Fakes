@@ -55,40 +55,123 @@ public static class BsonPath
     public static void SetValueByPath(BsonDocument doc, string path, BsonValue value)
     {
         var parts = path.Split('.');
-        BsonDocument current = doc;
+        BsonValue current = doc;
 
         for (int i = 0; i < parts.Length - 1; i++)
         {
             var part = parts[i];
-            if (!current.TryGetValue(part, out var next))
+
+            if (current is BsonArray array)
             {
-                next = new BsonDocument();
-                current[part] = next;
+                if (int.TryParse(part, out int index) && index >= 0)
+                {
+                    while (array.Count <= index)
+                        array.Add(BsonNull.Value);
+
+                    if (array[index].BsonType == BsonType.Null || array[index] is not BsonDocument)
+                        array[index] = new BsonDocument();
+
+                    current = array[index];
+                }
+                else
+                {
+                    for (int j = 0; j < array.Count; j++)
+                    {
+                        if (array[j] is BsonDocument subdoc)
+                        {
+                            if (!subdoc.TryGetValue(part, out _))
+                                subdoc[part] = new BsonDocument();
+
+                            current = subdoc[part];
+                            break;
+                        }
+                    }
+                }
             }
+            else if (current is BsonDocument bdoc)
+            {
+                if (!bdoc.TryGetValue(part, out var next))
+                {
+                    next = new BsonDocument();
+                    bdoc[part] = next;
+                }
 
-            if (next is not BsonDocument nextDoc)
-                nextDoc = new BsonDocument();
+                if (next is not BsonDocument nextDoc)
+                    nextDoc = new BsonDocument();
 
-            current[part] = nextDoc;
-            current = nextDoc;
+                bdoc[part] = nextDoc;
+                current = nextDoc;
+            }
         }
 
-        current[parts[^1]] = value;
+        var lastPart = parts[^1];
+        if (current is BsonArray lastArray)
+        {
+            if (int.TryParse(lastPart, out int lastIndex) && lastIndex >= 0)
+            {
+                while (lastArray.Count <= lastIndex)
+                    lastArray.Add(BsonNull.Value);
+
+                lastArray[lastIndex] = value;
+            }
+        }
+        else if (current is BsonDocument lastDoc)
+        {
+            lastDoc[lastPart] = value;
+        }
     }
 
     public static void RemoveValueByPath(BsonDocument doc, string path)
     {
         var parts = path.Split('.');
-        BsonDocument current = doc;
+        BsonValue current = doc;
 
         for (int i = 0; i < parts.Length - 1; i++)
         {
-            if (!current.TryGetValue(parts[i], out var next) || next is not BsonDocument nextDoc)
-                return;
+            var part = parts[i];
 
-            current = nextDoc;
+            if (current is BsonArray array)
+            {
+                if (int.TryParse(part, out int index) && index >= 0 && index < array.Count)
+                {
+                    current = array[index];
+                }
+                else
+                {
+                    var found = false;
+                    for (int j = 0; j < array.Count; j++)
+                    {
+                        if (array[j] is BsonDocument subdoc && subdoc.TryGetValue(part, out var value))
+                        {
+                            current = value;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                        return;
+                }
+            }
+            else if (current is BsonDocument bdoc && bdoc.TryGetValue(part, out var next))
+            {
+                current = next;
+            }
+            else
+            {
+                return;
+            }
         }
 
-        current.Remove(parts[^1]);
+        var lastPart = parts[^1];
+        if (current is BsonArray lastArray)
+        {
+            if (int.TryParse(lastPart, out int lastIndex) && lastIndex >= 0 && lastIndex < lastArray.Count)
+                lastArray.RemoveAt(lastIndex);
+        }
+        else if (current is BsonDocument lastDoc)
+        {
+            lastDoc.Remove(lastPart);
+        }
     }
 }
