@@ -328,7 +328,7 @@ public sealed class BsonFileBackend : IMongoBackend
                                 else
                                     newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
                             }
-                            newDoc = UpdateApplier.ApplyOperators(newDoc, replacement);
+                            newDoc = UpdateApplier.ApplyOperators(newDoc, replacement, isUpsertInsert: true);
                         }
                         else
                         {

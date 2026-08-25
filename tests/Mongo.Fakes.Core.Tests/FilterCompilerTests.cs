@@ -107,6 +107,26 @@ public class FilterCompilerTests
     }
 
     [Fact]
+    public void Compile_LogicalNor_ExcludesAllConditions()
+    {
+        var predicate = _compiler.Compile(
+            BsonDocument.Parse("{ $nor: [ { status: 'active' }, { status: 'pending' } ] }"));
+
+        Assert.False(predicate(BsonDocument.Parse("{ status: 'active' }")));
+        Assert.False(predicate(BsonDocument.Parse("{ status: 'pending' }")));
+        Assert.True(predicate(BsonDocument.Parse("{ status: 'inactive' }")));
+    }
+
+    [Fact]
+    public void Compile_LogicalNor_MatchesDocumentMissingField()
+    {
+        var predicate = _compiler.Compile(BsonDocument.Parse("{ $nor: [ { a: 1 } ] }"));
+
+        Assert.True(predicate(BsonDocument.Parse("{ }")));
+        Assert.False(predicate(BsonDocument.Parse("{ a: 1 }")));
+    }
+
+    [Fact]
     public void Compile_Not_NegatesCondition()
     {
         var predicate = _compiler.Compile(BsonDocument.Parse("{ age: { $not: { $gt: 18 } } }"));
@@ -202,7 +222,7 @@ public class FilterCompilerTests
     public void Compile_UnknownTopLevelOperator_ThrowsAtCompileTime()
     {
         Assert.Throws<NotSupportedException>(() =>
-            _compiler.Compile(BsonDocument.Parse("{ $nor: [ { x: 1 } ] }")));
+            _compiler.Compile(BsonDocument.Parse("{ $foobar: [ { x: 1 } ] }")));
     }
 
     [Fact]

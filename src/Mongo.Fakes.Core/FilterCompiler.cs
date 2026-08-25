@@ -78,6 +78,7 @@ public sealed class FilterCompiler
             {
                 "$and" => CompileLogicalArray(element.Value, docParam, Expression.AndAlso),
                 "$or" => CompileLogicalArray(element.Value, docParam, Expression.OrElse),
+                "$nor" => Expression.Not(CompileLogicalArray(element.Value, docParam, Expression.OrElse)),
                 _ when element.Name.StartsWith('$') =>
                     throw new NotSupportedException($"Unsupported top-level operator '{element.Name}'"),
                 _ => CompileFieldCondition(element.Name, element.Value, docParam),
