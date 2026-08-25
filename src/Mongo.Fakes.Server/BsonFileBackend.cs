@@ -57,7 +57,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 "findandmodify" => HandleFindAndModify(database, command),
                 "distinct" => HandleDistinct(database, command),
                 "createindexes" => HandleNoOp("createindexes"),
-                "listindexes" => HandleNoOp("listindexes"),
+                "listindexes" => HandleListIndexes(database, command),
                 "create" => HandleNoOp("create"),
                 _ => throw new MongoCommandException(ErrorCodes.CommandNotFound, "CommandNotFound", $"no such cmd: {commandName}")
             };
@@ -535,6 +535,25 @@ public sealed class BsonFileBackend : IMongoBackend
         {
             { "ok", 1.0 },
             { "values", new BsonArray(distinctValues.Select(v => BsonValue.Create(v))) }
+        };
+    }
+
+    private BsonDocument HandleListIndexes(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("listIndexes", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'listIndexes' field.");
+
+        string collection = collValue.AsString;
+
+        return new BsonDocument
+        {
+            { "ok", 1.0 },
+            { "cursor", new BsonDocument
+            {
+                { "id", 0L },
+                { "ns", $"{database}.{collection}" },
+                { "firstBatch", new BsonArray() }
+            }}
         };
     }
 

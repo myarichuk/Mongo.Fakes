@@ -119,6 +119,7 @@ Server-only, on top of the shared filter engine:
 | Projection (`$project` equivalent) | Field inclusion/exclusion |
 | Sorting, `$skip`, `$limit` | Result ordering/slicing |
 | `$match`, `$project`, `$sort`, `$skip`, `$limit`, `$group`, `$unwind` | Aggregation pipeline stages |
+| GridFS (`MongoDB.Driver.GridFSBucket`) | Supported transparently via existing `insert`, `find`, `update`, `delete`, and `createIndexes` commands; `listIndexes` returns empty index list. No bucket-specific server code required. |
 | SCRAM-SHA-256 auth (optional) | `MongoFakeServer(backend, username:, password:)`; requires the driver to authenticate with exactly that credential — the server verifies a real SCRAM proof, it cannot accept an arbitrary password. Data commands are gated; handshake/admin commands are not. |
 
 ### Out of Scope (Explicit)

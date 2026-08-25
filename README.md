@@ -167,6 +167,30 @@ The `MongoFakeServer` provides:
 - **`StartAsync()`** / **`DisposeAsync()`** for lifecycle management
 - Semantics compatible with EphemeralMongo's `MongoRunner`
 
+### GridFS Support
+
+GridFS operations (file upload/download via `MongoDB.Driver.GridFSBucket`) are fully supported without any special configuration:
+
+```csharp
+var db = _client.GetDatabase("myapp");
+var bucket = new GridFSBucket(db);
+
+// Upload a file
+var fileContent = Encoding.UTF8.GetBytes("Hello, World!");
+var fileId = await bucket.UploadFromBytesAsync("hello.txt", fileContent);
+
+// Download the file
+var downloaded = await bucket.DownloadAsBytesAsync(fileId);
+
+// Also supports streaming operations
+using (var uploadStream = await bucket.OpenUploadStreamAsync("data.bin"))
+{
+    await uploadStream.WriteAsync(largeData, 0, largeData.Length);
+}
+```
+
+GridFS works transparently by using the existing `insert`, `find`, `update`, and `delete` command support — no bucket-specific code is needed. Files spanning multiple chunks are handled automatically.
+
 ## Building
 
 ```
