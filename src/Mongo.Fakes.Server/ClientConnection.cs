@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using MongoDB.Bson;
+using Mongo.Fakes.Server.Auth;
 using Mongo.Fakes.Server.Errors;
 using Mongo.Fakes.Server.Wire;
 
@@ -9,6 +10,7 @@ internal sealed class ClientConnection
 {
     private readonly TcpClient _client;
     private readonly CommandRouter _router;
+    private readonly AuthState _authState = new();
     private int _requestIdCounter;
 
     public ClientConnection(TcpClient client, CommandRouter router)
@@ -133,7 +135,7 @@ internal sealed class ClientConnection
             ? dbValue.AsString
             : "admin";
 
-        var result = await _router.RouteCommandAsync(database, msg.Body, ct).ConfigureAwait(false);
+        var result = await _router.RouteCommandAsync(database, msg.Body, _authState, ct).ConfigureAwait(false);
         result["ok"] = 1.0;
 
         if (msg.MoreToCome)
@@ -147,7 +149,7 @@ internal sealed class ClientConnection
         var msg = OpQueryMessage.Parse(body);
 
         string database = msg.FullCollectionName.Split('.')[0];
-        var result = await _router.RouteCommandAsync(database, msg.Query, ct).ConfigureAwait(false);
+        var result = await _router.RouteCommandAsync(database, msg.Query, _authState, ct).ConfigureAwait(false);
         result["ok"] = 1.0;
 
         return OpQueryMessage.BuildReply(result, header.RequestId, _requestIdCounter++);

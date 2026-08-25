@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using Mongo.Fakes.Server.Auth;
 using Mongo.Fakes.Server.Errors;
 using Mongo.Fakes.Server.Protocol;
 
@@ -7,13 +8,16 @@ namespace Mongo.Fakes.Server;
 internal sealed class CommandRouter
 {
     private readonly IMongoBackend _backend;
+    private readonly ScramCredential? _credential;
+    private int _conversationIdCounter;
 
-    public CommandRouter(IMongoBackend backend)
+    public CommandRouter(IMongoBackend backend, ScramCredential? credential = null)
     {
         _backend = backend;
+        _credential = credential;
     }
 
-    public async Task<BsonDocument> RouteCommandAsync(string database, BsonDocument command, CancellationToken ct)
+    public async Task<BsonDocument> RouteCommandAsync(string database, BsonDocument command, AuthState authState, CancellationToken ct)
     {
         if (command.ElementCount == 0)
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Empty command document.");
@@ -32,13 +36,73 @@ internal sealed class CommandRouter
             "getmore" => HandleGetMore(),
             "whatsmyuri" => HandleWhatsMyUri(),
             "connectionstatus" => HandleConnectionStatus(),
-            _ => await _backend.ExecuteCommandAsync(database, command, ct).ConfigureAwait(false)
+            "saslstart" => HandleSaslStart(command, authState),
+            "saslcontinue" => HandleSaslContinue(command, authState),
+            _ => await ExecuteBackendCommandAsync(database, command, authState, ct).ConfigureAwait(false)
+        };
+    }
+
+    private async Task<BsonDocument> ExecuteBackendCommandAsync(string database, BsonDocument command, AuthState authState, CancellationToken ct)
+    {
+        if (_credential != null && !authState.Authenticated)
+            throw new MongoCommandException(ErrorCodes.Unauthorized, "Unauthorized", "command requires authentication");
+
+        return await _backend.ExecuteCommandAsync(database, command, ct).ConfigureAwait(false);
+    }
+
+    private BsonDocument HandleSaslStart(BsonDocument command, AuthState authState)
+    {
+        if (_credential == null)
+            throw new MongoCommandException(ErrorCodes.AuthenticationFailed, "AuthenticationFailed", "Authentication is not enabled on this fake server.");
+
+        if (!command.TryGetValue("payload", out var payloadValue) || !payloadValue.IsBsonBinaryData)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'payload' field.");
+
+        var conversation = new ScramSha256Conversation(_credential);
+        byte[] serverFirst = conversation.ProcessClientFirst(payloadValue.AsBsonBinaryData.Bytes);
+
+        authState.Conversation = conversation;
+        authState.ConversationId = Interlocked.Increment(ref _conversationIdCounter);
+
+        return new BsonDocument
+        {
+            { "conversationId", authState.ConversationId },
+            { "done", false },
+            { "payload", new BsonBinaryData(serverFirst, BsonBinarySubType.Binary) }
+        };
+    }
+
+    private BsonDocument HandleSaslContinue(BsonDocument command, AuthState authState)
+    {
+        if (_credential == null || authState.Conversation == null)
+            throw new MongoCommandException(ErrorCodes.AuthenticationFailed, "AuthenticationFailed", "No SCRAM conversation in progress.");
+
+        if (!command.TryGetValue("conversationId", out var idValue) || idValue.ToInt32() != authState.ConversationId)
+            throw new MongoCommandException(ErrorCodes.AuthenticationFailed, "AuthenticationFailed", "Unknown SCRAM conversation.");
+
+        if (!command.TryGetValue("payload", out var payloadValue) || !payloadValue.IsBsonBinaryData)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'payload' field.");
+
+        byte[] serverFinal = authState.Conversation.ProcessClientFinal(payloadValue.AsBsonBinaryData.Bytes);
+        authState.Authenticated = true;
+        authState.Conversation = null;
+
+        return new BsonDocument
+        {
+            { "conversationId", authState.ConversationId },
+            { "done", true },
+            { "payload", new BsonBinaryData(serverFinal, BsonBinarySubType.Binary) }
         };
     }
 
     private BsonDocument HandleHello(BsonDocument command)
     {
-        return HandshakeResponse.CreateHello();
+        var hello = HandshakeResponse.CreateHello();
+
+        if (_credential != null && command.Contains("saslSupportedMechs"))
+            hello["saslSupportedMechs"] = new BsonArray { "SCRAM-SHA-256" };
+
+        return hello;
     }
 
     private BsonDocument HandlePing()

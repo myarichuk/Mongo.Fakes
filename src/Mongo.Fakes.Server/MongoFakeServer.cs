@@ -2,16 +2,22 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Mongo.Fakes.Server;
+using Mongo.Fakes.Server.Auth;
 
 namespace Mongo.Fakes.Server;
 
-public sealed class MongoFakeServer(IMongoBackend backend, int port = 0) : IAsyncDisposable
+/// <param name="username">
+/// When set, the fake requires SCRAM-SHA-256 authentication against exactly this
+/// username/password. A test connecting with a <c>MongoCredential</c> must use these same
+/// values — a fake server cannot verify an arbitrary password it was never told.
+/// </param>
+public sealed class MongoFakeServer(IMongoBackend backend, int port = 0, string? username = null, string? password = null) : IAsyncDisposable
 {
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
     private readonly ConcurrentDictionary<Guid, Task> _clientTasks = new();
-    private readonly CommandRouter _router = new(backend);
+    private readonly CommandRouter _router = new(backend, username != null ? new ScramCredential(username, password ?? throw new ArgumentException("password is required when username is set", nameof(password))) : null);
 
     public IMongoBackend Backend { get; } = backend;
     public int Port { get; private set; } = port;
