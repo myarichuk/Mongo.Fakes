@@ -456,12 +456,12 @@ public class FakeVsRealMongoTests : IAsyncLifetime
 
         var pipeline = new[]
         {
-            new BsonDocument { { "$sort", new BsonDocument { { "_id", 1 } } } },
             new BsonDocument
             {
                 {
                     "$setWindowFields", new BsonDocument
                     {
+                        { "sortBy", new BsonDocument { { "_id", 1 } } },
                         { "output", new BsonDocument { { "docNum", new BsonDocument { { "$documentNumber", new BsonDocument() } } } } }
                     }
                 }
