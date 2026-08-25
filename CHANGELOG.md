@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.1...Mongo.Fakes-v0.7.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* discrepancy between real and fake mongo for a command ([88e1bc0](https://github.com/myarichuk/Mongo.Fakes/commit/88e1bc0668fdeb1d082ed0fb83ae7febf9d313d2))
+
 ## [0.7.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.0...Mongo.Fakes-v0.7.1) (2026-08-25)
 
 
