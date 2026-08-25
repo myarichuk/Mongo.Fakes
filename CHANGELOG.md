@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.3.0...Mongo.Fakes-v0.3.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* pack README.md into Mongo.Fakes.Server nuget package ([4610bf5](https://github.com/myarichuk/Mongo.Fakes/commit/4610bf53e443e2d3cecf4f72b2bfc6d5e7a357b4))
+
 ## [0.3.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.6...Mongo.Fakes-v0.3.0) (2026-08-25)
 
 
