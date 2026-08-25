@@ -76,6 +76,7 @@ internal sealed class ExpressionEvaluator
             "$divide" => EvalDivide(args, doc, variables),
             "$cond" => EvalCond(args, doc, variables),
             "$ifNull" => EvalIfNull(args, doc, variables),
+            "$arrayElemAt" => EvalArrayElemAt(args, doc, variables),
             "$eq" => EvalEq(args, doc, variables),
             "$ne" => EvalNe(args, doc, variables),
             "$gt" => EvalGt(args, doc, variables),
@@ -237,6 +238,33 @@ internal sealed class ExpressionEvaluator
 
         var value = Evaluate(array[0], doc, variables);
         return value.BsonType == BsonType.Null ? Evaluate(array[1], doc, variables) : value;
+    }
+
+    private static BsonValue EvalArrayElemAt(BsonValue args, BsonDocument doc, IReadOnlyDictionary<string, BsonValue>? variables = null)
+    {
+        if (args is not BsonArray array || array.Count != 2)
+            throw new ArgumentException("$arrayElemAt requires 2 arguments: [array, index]");
+
+        var arrayVal = Evaluate(array[0], doc, variables);
+        var indexVal = Evaluate(array[1], doc, variables);
+
+        if (arrayVal.BsonType == BsonType.Null || indexVal.BsonType == BsonType.Null)
+            return BsonNull.Value;
+
+        if (arrayVal is not BsonArray bsonArray)
+            return BsonNull.Value;
+
+        if (!indexVal.IsNumeric)
+            return BsonNull.Value;
+
+        int index = indexVal.ToInt32();
+        if (index < 0)
+            index += bsonArray.Count;
+
+        if (index < 0 || index >= bsonArray.Count)
+            return BsonNull.Value;
+
+        return bsonArray[index];
     }
 
     private static BsonValue EvalEq(BsonValue args, BsonDocument doc, IReadOnlyDictionary<string, BsonValue>? variables = null)
