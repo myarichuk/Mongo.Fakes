@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.3.1...Mongo.Fakes-v0.4.0) (2026-08-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** MongoFakeServer's constructor gained two optional parameters inserted before none existed, which is a binary break for callers compiled against the old 2-arg overload (MissingMethodException at runtime, not caught at compile time).
+
+### Features
+
+* add $nor filter operator and missing update operators ([f330af3](https://github.com/myarichuk/Mongo.Fakes/commit/f330af352b36f7822ea448101bb86018072a4931))
+* **server:** add optional SCRAM-SHA-256 authentication ([62591f8](https://github.com/myarichuk/Mongo.Fakes/commit/62591f82173fff9af336052def69240208ea0cfb))
+
 ## [0.3.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.3.0...Mongo.Fakes-v0.3.1) (2026-08-25)
 
 
