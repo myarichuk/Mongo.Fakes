@@ -51,7 +51,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 "update" => HandleUpdate(database, command),
                 "delete" => HandleDelete(database, command),
                 "listdatabases" => HandleListDatabases(),
-                "listcollections" => HandleListCollections(database),
+                "listcollections" => HandleListCollections(database, command),
                 "drop" => HandleDrop(database, command),
                 "dropdatabase" => HandleDropDatabase(database),
                 "findandmodify" => HandleFindAndModify(database, command),
@@ -447,8 +447,10 @@ public sealed class BsonFileBackend : IMongoBackend
         }
     }
 
-    private BsonDocument HandleListCollections(string database)
+    private BsonDocument HandleListCollections(string database, BsonDocument command)
     {
+        var filter = command.TryGetValue("filter", out var fValue) ? (BsonDocument)fValue : new BsonDocument();
+
         lock (_lock)
         {
             if (!_databases.TryGetValue(database, out var db))
@@ -465,7 +467,16 @@ public sealed class BsonFileBackend : IMongoBackend
                 };
             }
 
-            var collections = new BsonArray(db.Keys.Select(k => new BsonDocument { { "name", k } }));
+            var allCollections = db.Keys.Select(k => new BsonDocument { { "name", k } }).ToList();
+
+            if (filter.ElementCount > 0)
+            {
+                var filterCompiler = new FilterCompiler();
+                var predicate = filterCompiler.Compile(filter);
+                allCollections = allCollections.Where(predicate).ToList();
+            }
+
+            var collections = new BsonArray(allCollections);
             return new BsonDocument
             {
                 { "ok", 1.0 },
@@ -565,55 +576,110 @@ public sealed class BsonFileBackend : IMongoBackend
         string collection = collValue.AsString;
         var filter = command.TryGetValue("query", out var qValue) ? (BsonDocument)qValue : new BsonDocument();
         var sort = command.TryGetValue("sort", out var sValue) ? (BsonDocument)sValue : null;
+        bool returnNew = command.TryGetValue("new", out var newValue) ? newValue.ToBoolean() : false;
+        bool upsert = command.TryGetValue("upsert", out var upValue) ? upValue.ToBoolean() : false;
+
+        bool isUpdate = command.Contains("update");
+        bool isRemove = command.TryGetValue("remove", out var removeValue) && removeValue.ToBoolean();
+
+        if (isRemove && (isUpdate || upsert))
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Cannot specify both remove and update/upsert in findAndModify");
 
         var data = GetCollection(database, collection);
         var executor = new BsonQueryExecutor();
         var results = executor.ExecuteFind(data, filter, null, sort, 0, 1).ToList();
 
         if (results.Count == 0)
-            return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
-
-        var foundDoc = results[0];
-        var returnValue = new BsonDocument(foundDoc);
-
-        bool isUpdate = command.Contains("update");
-        bool isRemove = command.TryGetValue("remove", out var removeValue) && removeValue.ToBoolean();
-
-        if (isUpdate && command.TryGetValue("update", out var updateValue))
         {
-            var update = (BsonDocument)updateValue;
-            if (update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$"))
-                throw new NotSupportedException("Update operators are not yet supported in findAndModify.");
-
-            var newDoc = new BsonDocument(update);
-            newDoc["_id"] = foundDoc["_id"];
-
-            var indices = new List<int>();
-            var predicate = new FilterCompiler().Compile(filter);
-            for (int idx = 0; idx < data.Count; idx++)
+            if (isUpdate && upsert && command.TryGetValue("update", out var updateValue))
             {
-                if (predicate(data[idx]))
+                var update = (BsonDocument)updateValue;
+                bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
+                lock (_lock)
                 {
-                    indices.Add(idx);
-                    break;
+                    if (!_databases.TryGetValue(database, out var db))
+                    {
+                        db = new Dictionary<string, List<BsonDocument>>();
+                        _databases[database] = db;
+                    }
+
+                    if (!db.TryGetValue(collection, out var collDocs))
+                    {
+                        collDocs = new List<BsonDocument>();
+                        db[collection] = collDocs;
+                    }
+
+                    BsonDocument newDoc;
+                    if (isOperatorUpdate)
+                    {
+                        newDoc = new BsonDocument();
+                        if (!newDoc.Contains("_id"))
+                        {
+                            if (filter.Contains("_id"))
+                                newDoc["_id"] = filter["_id"];
+                            else
+                                newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                        }
+                        newDoc = UpdateApplier.ApplyOperators(newDoc, update, isUpsertInsert: true);
+                    }
+                    else
+                    {
+                        newDoc = new BsonDocument(update);
+                        if (!newDoc.Contains("_id"))
+                        {
+                            if (filter.Contains("_id"))
+                                newDoc["_id"] = filter["_id"];
+                            else
+                                newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
+                        }
+                    }
+
+                    collDocs.Add(newDoc);
+                    return new BsonDocument
+                    {
+                        { "ok", 1.0 },
+                        { "value", returnNew ? newDoc : BsonNull.Value }
+                    };
                 }
             }
 
-            if (indices.Count > 0)
+            return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
+        }
+
+        var foundDoc = results[0];
+        var returnValue = new BsonDocument(foundDoc);
+        BsonDocument? updatedDoc = null;
+
+        if (isUpdate && command.TryGetValue("update", out var updateValue2))
+        {
+            var update = (BsonDocument)updateValue2;
+            bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
+            lock (_lock)
             {
-                var allDocs = GetCollection(database, collection);
-                lock (_lock)
+                if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
                 {
-                    if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
+                    BsonDocument newDoc;
+                    if (isOperatorUpdate)
                     {
-                        var origPredicate = new FilterCompiler().Compile(filter);
-                        for (int idx = collDocs.Count - 1; idx >= 0; idx--)
+                        newDoc = UpdateApplier.ApplyOperators(foundDoc, update);
+                    }
+                    else
+                    {
+                        newDoc = new BsonDocument(update);
+                        newDoc["_id"] = foundDoc["_id"];
+                    }
+
+                    updatedDoc = newDoc;
+
+                    var predicate = new FilterCompiler().Compile(filter);
+                    for (int idx = 0; idx < collDocs.Count; idx++)
+                    {
+                        if (collDocs[idx]["_id"].Equals(foundDoc["_id"]))
                         {
-                            if (origPredicate(collDocs[idx]))
-                            {
-                                collDocs[idx] = newDoc;
-                                break;
-                            }
+                            collDocs[idx] = newDoc;
+                            break;
                         }
                     }
                 }
@@ -621,41 +687,34 @@ public sealed class BsonFileBackend : IMongoBackend
         }
         else if (isRemove)
         {
-            var indices = new List<int>();
-            var predicate = new FilterCompiler().Compile(filter);
-            for (int idx = 0; idx < data.Count; idx++)
+            lock (_lock)
             {
-                if (predicate(data[idx]))
+                if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
                 {
-                    indices.Add(idx);
-                    break;
-                }
-            }
-
-            if (indices.Count > 0)
-            {
-                lock (_lock)
-                {
-                    if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
+                    for (int idx = 0; idx < collDocs.Count; idx++)
                     {
-                        var origPredicate = new FilterCompiler().Compile(filter);
-                        for (int idx = collDocs.Count - 1; idx >= 0; idx--)
+                        if (collDocs[idx]["_id"].Equals(foundDoc["_id"]))
                         {
-                            if (origPredicate(collDocs[idx]))
-                            {
-                                collDocs.RemoveAt(idx);
-                                break;
-                            }
+                            collDocs.RemoveAt(idx);
+                            break;
                         }
                     }
                 }
             }
         }
 
+        BsonValue valueToReturn;
+        if (isUpdate && returnNew && updatedDoc != null)
+            valueToReturn = updatedDoc;
+        else if (isRemove)
+            valueToReturn = returnValue;
+        else
+            valueToReturn = returnValue;
+
         return new BsonDocument
         {
             { "ok", 1.0 },
-            { "value", returnValue }
+            { "value", valueToReturn }
         };
     }
 
