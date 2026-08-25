@@ -40,13 +40,14 @@ public sealed class FilterCompiler
     }
 
     /// <summary>Compile a MongoDB filter document to an executable predicate.</summary>
-    public Func<BsonDocument, bool> Compile(BsonDocument filter) => CompileExpression(filter).Compile();
+    public Func<BsonDocument, bool> Compile(BsonDocument filter, IReadOnlyDictionary<string, BsonValue>? variables = null)
+        => CompileExpression(filter, variables).Compile();
 
     /// <summary>Compile to an expression tree (for composition/debugging).</summary>
-    public Expression<Func<BsonDocument, bool>> CompileExpression(BsonDocument filter)
+    public Expression<Func<BsonDocument, bool>> CompileExpression(BsonDocument filter, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         var docParam = Expression.Parameter(typeof(BsonDocument), "doc");
-        var body = CompileFilterBody(filter, docParam);
+        var body = CompileFilterBody(filter, docParam, variables);
         return Expression.Lambda<Func<BsonDocument, bool>>(body, docParam);
     }
 
@@ -68,7 +69,7 @@ public sealed class FilterCompiler
         return value => value is BsonDocument doc && nestedPredicate(doc);
     }
 
-    private Expression CompileFilterBody(BsonDocument filter, ParameterExpression docParam)
+    private Expression CompileFilterBody(BsonDocument filter, ParameterExpression docParam, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         Expression? combined = null;
 
@@ -76,12 +77,12 @@ public sealed class FilterCompiler
         {
             var clause = element.Name switch
             {
-                "$and" => CompileLogicalArray(element.Value, docParam, Expression.AndAlso),
-                "$or" => CompileLogicalArray(element.Value, docParam, Expression.OrElse),
-                "$nor" => Expression.Not(CompileLogicalArray(element.Value, docParam, Expression.OrElse)),
+                "$and" => CompileLogicalArray(element.Value, docParam, Expression.AndAlso, variables),
+                "$or" => CompileLogicalArray(element.Value, docParam, Expression.OrElse, variables),
+                "$nor" => Expression.Not(CompileLogicalArray(element.Value, docParam, Expression.OrElse, variables)),
                 _ when element.Name.StartsWith('$') =>
                     throw new NotSupportedException($"Unsupported top-level operator '{element.Name}'"),
-                _ => CompileFieldCondition(element.Name, element.Value, docParam),
+                _ => CompileFieldCondition(element.Name, element.Value, docParam, variables),
             };
 
             combined = combined is null ? clause : Expression.AndAlso(combined, clause);
@@ -90,7 +91,7 @@ public sealed class FilterCompiler
         return combined ?? Expression.Constant(true);
     }
 
-    private Expression CompileLogicalArray(BsonValue value, ParameterExpression docParam, Func<Expression, Expression, Expression> combine)
+    private Expression CompileLogicalArray(BsonValue value, ParameterExpression docParam, Func<Expression, Expression, Expression> combine, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         if (value is not BsonArray array || array.Count == 0)
         {
@@ -98,11 +99,11 @@ public sealed class FilterCompiler
         }
 
         return array
-            .Select(d => d is not BsonDocument doc ? throw new ArgumentException("$and/$or array element must be a document") : CompileFilterBody(doc, docParam))
+            .Select(d => d is not BsonDocument doc ? throw new ArgumentException("$and/$or array element must be a document") : CompileFilterBody(doc, docParam, variables))
             .Aggregate(combine);
     }
 
-    private Expression CompileFieldCondition(string field, BsonValue condition, ParameterExpression docParam)
+    private Expression CompileFieldCondition(string field, BsonValue condition, ParameterExpression docParam, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         var fieldValueExpr = Expression.Call(GetFieldValueMethod, docParam, Expression.Constant(field));
 
@@ -111,16 +112,16 @@ public sealed class FilterCompiler
         // shape the driver produces for `{ field: /pattern/opts }` filters.
         if (condition.IsBsonRegularExpression)
         {
-            return CompileOperator("$regex", fieldValueExpr, condition, docParam);
+            return CompileOperator("$regex", fieldValueExpr, condition, docParam, variables);
         }
 
         return IsOperatorDocument(condition)
-            ? CompileOperatorClauses((BsonDocument)condition, fieldValueExpr, docParam)
-            : CompileOperator("$eq", fieldValueExpr, condition, docParam);
+            ? CompileOperatorClauses((BsonDocument)condition, fieldValueExpr, docParam, variables)
+            : CompileOperator("$eq", fieldValueExpr, condition, docParam, variables);
     }
 
     /// <summary>ANDs together every operator in a <c>{ $op1: ..., $op2: ... }</c> document, against a shared value expression.</summary>
-    private Expression CompileOperatorClauses(BsonDocument condDoc, Expression valueExpr, ParameterExpression docParam)
+    private Expression CompileOperatorClauses(BsonDocument condDoc, Expression valueExpr, ParameterExpression docParam, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         var options = condDoc.TryGetValue("$options", out var opt) ? opt.AsString : null;
         Expression? combined = null;
@@ -136,14 +137,14 @@ public sealed class FilterCompiler
                 ? new BsonDocument { { "$regex", op.Value }, { "$options", options } }
                 : op.Value;
 
-            var clause = CompileOperator(op.Name, valueExpr, opValue, docParam);
+            var clause = CompileOperator(op.Name, valueExpr, opValue, docParam, variables);
             combined = combined is null ? clause : Expression.AndAlso(combined, clause);
         }
 
         return combined ?? throw new ArgumentException("Empty operator document in filter");
     }
 
-    private Expression CompileOperator(string op, Expression valueExpr, BsonValue operatorValue, ParameterExpression docParam)
+    private Expression CompileOperator(string op, Expression valueExpr, BsonValue operatorValue, ParameterExpression docParam, IReadOnlyDictionary<string, BsonValue>? variables = null)
     {
         if (op == "$not")
         {
@@ -152,7 +153,7 @@ public sealed class FilterCompiler
                 throw new ArgumentException("$not requires a document", nameof(operatorValue));
             }
 
-            return Expression.Not(CompileOperatorClauses(notCondition, valueExpr, docParam));
+            return Expression.Not(CompileOperatorClauses(notCondition, valueExpr, docParam, variables));
         }
 
         if (!_operators.TryGetValue(op, out var translator))

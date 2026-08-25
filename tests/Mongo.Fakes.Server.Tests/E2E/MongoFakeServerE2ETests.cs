@@ -192,4 +192,147 @@ public class MongoFakeServerE2ETests : IAsyncLifetime
             MongoDB.Driver.Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("status", "missing"));
         Assert.Equal(0, none);
     }
+
+    [Fact]
+    public async Task Aggregate_Lookup_EqualityJoin_Should_Join_Collections()
+    {
+        var ordersCollection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("lookup_orders");
+        var customersCollection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("lookup_customers");
+
+        var orders = new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "customerId", "alice" }, { "item", "Widget" } },
+            new MongoDB.Bson.BsonDocument { { "_id", 2 }, { "customerId", "bob" }, { "item", "Gadget" } },
+            new MongoDB.Bson.BsonDocument { { "_id", 3 }, { "customerId", "alice" }, { "item", "Doohickey" } },
+        };
+
+        var customers = new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", "alice" }, { "name", "Alice Smith" }, { "age", 30 } },
+            new MongoDB.Bson.BsonDocument { { "_id", "bob" }, { "name", "Bob Jones" }, { "age", 25 } },
+        };
+
+        await ordersCollection.InsertManyAsync(orders);
+        await customersCollection.InsertManyAsync(customers);
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() {
+                { "$lookup", new MongoDB.Bson.BsonDocument
+                {
+                    { "from", "lookup_customers" },
+                    { "localField", "customerId" },
+                    { "foreignField", "_id" },
+                    { "as", "customer" }
+                }}
+            }
+        };
+
+        var cursor = await ordersCollection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.ToListAsync();
+
+        Assert.Equal(3, result.Count);
+
+        // First order should have Alice's customer data
+        var firstOrder = result[0];
+        Assert.Equal("alice", firstOrder["customerId"].AsString);
+        Assert.True(firstOrder.Contains("customer"));
+        var customerArray = firstOrder["customer"].AsBsonArray;
+        Assert.Equal(1, customerArray.Count);
+        Assert.Equal("Alice Smith", customerArray[0]["name"].AsString);
+
+        // Orders from same customer should have same customer data
+        var aliceOrders = result.Where(o => o["customerId"].AsString == "alice").ToList();
+        Assert.Equal(2, aliceOrders.Count);
+        foreach (var order in aliceOrders)
+        {
+            Assert.Equal(1, order["customer"].AsBsonArray.Count);
+            Assert.Equal("Alice Smith", order["customer"].AsBsonArray[0]["name"].AsString);
+        }
+    }
+
+    [Fact]
+    public async Task Aggregate_Lookup_SubPipeline_Should_Run_Pipeline_On_Foreign_Collection()
+    {
+        var ordersCollection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("lookup_orders_sub");
+        var customersCollection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("lookup_customers_sub");
+
+        var orders = new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "customerId", "alice" }, { "amount", 100 } },
+            new MongoDB.Bson.BsonDocument { { "_id", 2 }, { "customerId", "bob" }, { "amount", 200 } },
+        };
+
+        var customers = new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", "alice" }, { "name", "Alice" }, { "credit", 500 } },
+            new MongoDB.Bson.BsonDocument { { "_id", "bob" }, { "name", "Bob" }, { "credit", 300 } },
+            new MongoDB.Bson.BsonDocument { { "_id", "charlie" }, { "name", "Charlie" }, { "credit", 1000 } },
+        };
+
+        await ordersCollection.InsertManyAsync(orders);
+        await customersCollection.InsertManyAsync(customers);
+
+        // Lookup with sub-pipeline that filters customers
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() {
+                { "$lookup", new MongoDB.Bson.BsonDocument
+                {
+                    { "from", "lookup_customers_sub" },
+                    { "localField", "customerId" },
+                    { "foreignField", "_id" },
+                    { "pipeline", new MongoDB.Bson.BsonArray
+                    {
+                        new MongoDB.Bson.BsonDocument { { "$match", new MongoDB.Bson.BsonDocument { { "credit", new MongoDB.Bson.BsonDocument { { "$gte", 400 } } } } } }
+                    }},
+                    { "as", "customer" }
+                }}
+            }
+        };
+
+        var cursor = await ordersCollection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.ToListAsync();
+
+        // Only Alice (credit 500) should have a customer record; Bob (credit 300) should have empty array
+        var aliceOrder = result.First(o => o["customerId"].AsString == "alice");
+        Assert.Equal(1, aliceOrder["customer"].AsBsonArray.Count);
+        Assert.Equal("Alice", aliceOrder["customer"].AsBsonArray[0]["name"].AsString);
+
+        var bobOrder = result.First(o => o["customerId"].AsString == "bob");
+        Assert.Equal(0, bobOrder["customer"].AsBsonArray.Count);
+    }
+
+    [Fact]
+    public async Task Aggregate_Lookup_NonExistentCollection_Should_Return_EmptyArray()
+    {
+        var ordersCollection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("lookup_orders_nonexist");
+
+        var orders = new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "customerId", "alice" } },
+        };
+
+        await ordersCollection.InsertManyAsync(orders);
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() {
+                { "$lookup", new MongoDB.Bson.BsonDocument
+                {
+                    { "from", "nonexistent_collection" },
+                    { "localField", "customerId" },
+                    { "foreignField", "_id" },
+                    { "as", "customer" }
+                }}
+            }
+        };
+
+        var cursor = await ordersCollection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var result = await cursor.ToListAsync();
+
+        Assert.Equal(1, result.Count);
+        Assert.True(result[0].Contains("customer"));
+        Assert.Equal(0, result[0]["customer"].AsBsonArray.Count);
+    }
 }

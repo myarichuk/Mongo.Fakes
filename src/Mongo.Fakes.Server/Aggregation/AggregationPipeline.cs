@@ -8,6 +8,14 @@ namespace Mongo.Fakes.Server.Aggregation;
 internal sealed class AggregationPipeline
 {
     private readonly FilterCompiler _filterCompiler = new();
+    private readonly Func<string, IReadOnlyList<BsonDocument>>? _resolveCollection;
+    private readonly IReadOnlyDictionary<string, BsonValue>? _variables;
+
+    public AggregationPipeline(Func<string, IReadOnlyList<BsonDocument>>? resolveCollection = null, IReadOnlyDictionary<string, BsonValue>? variables = null)
+    {
+        _resolveCollection = resolveCollection;
+        _variables = variables;
+    }
 
     public IEnumerable<BsonDocument> Execute(IEnumerable<BsonDocument> data, BsonArray pipeline)
     {
@@ -36,6 +44,7 @@ internal sealed class AggregationPipeline
                 "$addFields" => ExecuteAddFields(current, (BsonDocument)stageElem.Value),
                 "$set" => ExecuteAddFields(current, (BsonDocument)stageElem.Value),
                 "$replaceRoot" => ExecuteReplaceRoot(current, (BsonDocument)stageElem.Value),
+                "$lookup" => ExecuteLookup(current, (BsonDocument)stageElem.Value),
                 _ => throw new MongoCommandException(ErrorCodes.UnrecognizedPipelineStage, "UnrecognizedPipelineStage", $"Unknown stage: {stageElem.Name}")
             };
         }
@@ -45,7 +54,7 @@ internal sealed class AggregationPipeline
 
     private IEnumerable<BsonDocument> ExecuteMatch(IEnumerable<BsonDocument> data, BsonDocument filter)
     {
-        var predicate = _filterCompiler.Compile(filter);
+        var predicate = _filterCompiler.Compile(filter, _variables);
         return data.Where(predicate);
     }
 
@@ -113,7 +122,7 @@ internal sealed class AggregationPipeline
             var result = (BsonDocument)doc.DeepClone();
             foreach (var elem in fieldSpec.Elements)
             {
-                var value = ExpressionEvaluator.Evaluate(elem.Value, doc);
+                var value = ExpressionEvaluator.Evaluate(elem.Value, doc, _variables);
                 BsonPath.SetValueByPath(result, elem.Name, value);
             }
             return result;
@@ -127,10 +136,19 @@ internal sealed class AggregationPipeline
 
         return data.Select(doc =>
         {
-            var newRoot = ExpressionEvaluator.Evaluate(rootExpr, doc);
+            var newRoot = ExpressionEvaluator.Evaluate(rootExpr, doc, _variables);
             if (!newRoot.IsBsonDocument)
                 throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "$replaceRoot newRoot must be a document");
             return (BsonDocument)newRoot;
         });
+    }
+
+    private IEnumerable<BsonDocument> ExecuteLookup(IEnumerable<BsonDocument> data, BsonDocument stageDoc)
+    {
+        if (_resolveCollection == null)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "$lookup requires collection resolver (internal error)");
+
+        var lookupStage = new LookupStage(stageDoc, _resolveCollection);
+        return lookupStage.Execute(data);
     }
 }

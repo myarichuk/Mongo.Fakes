@@ -145,7 +145,7 @@ public sealed class BsonFileBackend : IMongoBackend
         var pipeline = (BsonArray)pipelineValue;
         var data = GetCollection(database, collection);
 
-        var executor = new AggregationPipeline();
+        var executor = new AggregationPipeline(coll => GetCollection(database, coll));
         var results = executor.Execute(data, pipeline).ToList();
 
         return new BsonDocument
