@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.6.0...Mongo.Fakes-v0.7.0) (2026-08-25)
+
+
+### Features
+
+* implement per-document copy-on-write (CoW) for efficient test fixture isolation ([bb422ce](https://github.com/myarichuk/Mongo.Fakes/commit/bb422ce7ee5a43e5705fe8f59496621e222ae957))
+
 ## [0.6.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.5.0...Mongo.Fakes-v0.6.0) (2026-08-25)
 
 
