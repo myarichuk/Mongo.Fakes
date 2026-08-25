@@ -191,6 +191,24 @@ using (var uploadStream = await bucket.OpenUploadStreamAsync("data.bin"))
 
 GridFS works transparently by using the existing `insert`, `find`, `update`, and `delete` command support — no bucket-specific code is needed. Files spanning multiple chunks are handled automatically.
 
+## Performance: Copy-on-Write (CoW) Fixture Isolation
+
+For test suites with hundreds of test fixtures sharing the same baseline data, **Mongo.Fakes implements per-document copy-on-write (CoW)** to minimize memory overhead:
+
+- **Baseline data** (loaded from fixture files) is shared across all test fixtures
+- **Per-fixture mutations** are tracked separately — when a test modifies a document, only the changed version is copied to heap
+- **Unmodified documents** reference the original baseline (zero memory overhead)
+
+This enables thousands of concurrent test fixtures to maintain isolation without the memory cost of cloning 100MB+ baselines per fixture.
+
+**Typical scenario:**
+- Baseline: 100 MB shared across all fixtures
+- Test Class A: inserts 5 docs, updates 3 → ~50 KB mutations
+- Test Class B: deletes 2 docs → ~20 KB mutations
+- **Total memory**: 100 MB + 70 KB (instead of 200 MB for naive cloning)
+
+For tests that don't mutate data, the footprint is the baseline size alone — perfect for read-heavy test suites.
+
 ## Building
 
 ```

@@ -1,8 +1,8 @@
 # Mongo.Fakes: Specification
 
-**Version:** 2.1 (Merged: Core filter compiler + Server wire-protocol double)
+**Version:** 2.2 (CoW Fixture Isolation + Core filter compiler + Server wire-protocol double)
 **Status:** Specification
-**Last Updated:** August 24, 2026
+**Last Updated:** August 25, 2026
 **Author:** Michael Yarichuk
 
 ---
@@ -679,18 +679,74 @@ public interface IMongoBackend
 }
 ```
 
+#### `IBaselineDataProvider`
+
+```csharp
+public interface IBaselineDataProvider
+{
+    /// Get all documents in a collection from baseline
+    IReadOnlyList<BsonDocument> GetCollection(string database, string collection);
+    
+    /// Get list of database names
+    IReadOnlyList<string> GetDatabases();
+    
+    /// Get list of collection names in a database
+    IReadOnlyList<string> GetCollections(string database);
+}
+```
+
+#### `FileBasedBaselineProvider`
+
+```csharp
+public class FileBasedBaselineProvider : IBaselineDataProvider
+{
+    // Loaded once at startup from fixture files
+    private readonly Dictionary<string, Dictionary<string, List<BsonDocument>>> _databases;
+    
+    public FileBasedBaselineProvider(string fixtureRootFolder);
+    public FileBasedBaselineProvider(string fixtureRootFolder, bool loadFromMongoDump);
+}
+```
+
+Shared across all test fixtures; immutable after construction.
+
+#### `DocumentSnapshot`
+
+```csharp
+internal class DocumentSnapshot
+{
+    public BsonDocument Original { get; }      // Reference to baseline
+    public BsonDocument? Mutated { get; set; } // Created on first write
+    
+    public BsonDocument Current => Mutated ?? Original;
+}
+```
+
+Per-document mutation tracking; one instance per modified document per fixture.
+
 #### `BsonFileBackend`
 
 ```csharp
 public class BsonFileBackend : IMongoBackend
 {
-    private readonly Dictionary<string, BsonDocument[]> _collections;
-    private readonly ReaderWriterLockSlim _lock;
+    // Shared baseline (immutable)
+    private readonly IBaselineDataProvider _baseline;
+    
+    // Per-fixture mutation tracking
+    private readonly Dictionary<string, DocumentSnapshot> _snapshots;
+    private readonly HashSet<string> _deletedIds;
 
+    // Legacy constructor for backward compatibility
     public BsonFileBackend(string fixtureFolder);
+    
+    // Explicit CoW constructor
+    public BsonFileBackend(IBaselineDataProvider baseline);
+    
     public Task<BsonDocument> ExecuteCommandAsync(string database, BsonDocument command, CancellationToken ct);
 }
 ```
+
+Each fixture instance maintains its own `_snapshots` and `_deletedIds`, enabling isolation while sharing `_baseline` across fixtures.
 
 #### `BsonQueryExecutor`
 
@@ -835,6 +891,69 @@ BsonValue GetFieldValue(BsonDocument doc, string path)
 ---
 
 ## Data Loading
+
+### Copy-on-Write (CoW) Fixture Isolation
+
+To support thousands of test fixtures sharing baseline data efficiently, **Mongo.Fakes implements per-document copy-on-write (CoW) isolation**:
+
+#### Architecture
+
+```
+Baseline Data (shared, file-backed)
+  ↓
+IBaselineDataProvider (read-only interface)
+  ↓
+Per-Fixture BsonFileBackend Instance
+  ├─ DocumentSnapshot tracking (mutations only)
+  ├─ Deleted IDs set (logical deletes)
+  └─ Mutations dictionary (modified documents)
+```
+
+#### How It Works
+
+1. **Baseline Loading**: `FileBasedBaselineProvider` loads fixture files once at application startup and holds them immutable in memory.
+
+2. **Per-Fixture Isolation**: Each test fixture creates its own `BsonFileBackend(IBaselineDataProvider)` instance pointing to the shared baseline provider.
+
+3. **Mutation Tracking**: Each backend tracks mutations separately using `DocumentSnapshot`:
+   ```csharp
+   private class DocumentSnapshot
+   {
+       public BsonDocument Original { get; }      // Reference to baseline (immutable)
+       public BsonDocument? Mutated { get; set; } // Mutation copy (created on first write)
+       
+       public BsonDocument Current => Mutated ?? Original;  // Return current version
+   }
+   ```
+
+4. **Read Operations**: Return the "current" version of each document (original if unmutated, mutated if changed).
+
+5. **Write Operations**: On first mutation, create a copy and store it in `Mutated`; subsequent operations modify the copy.
+
+6. **Delete Operations**: Track deleted document IDs separately; they're filtered from reads.
+
+7. **Teardown**: Mutations are naturally garbage-collected when the fixture's `BsonFileBackend` is disposed.
+
+#### Memory Efficiency
+
+**Scenario: 1000 test fixtures, 100 MB baseline**
+
+- **Naive cloning:** 1000 × 100 MB = 100 GB ❌
+- **CoW approach:** 100 MB baseline + ~1 MB mutations (per 10-20 fixture mutations) = ~101-102 MB ✅
+
+**Per-document key:** Document identity is based on `_id` JSON representation, supporting any BSON type (ObjectId, string, integer, etc.).
+
+#### Supported Operations
+
+| Operation | Behavior |
+|-----------|----------|
+| Reads | Return current document (original or mutated) |
+| Insert | Add new document to snapshot tracking |
+| Update | Create mutated copy on first write |
+| Delete | Mark document as deleted (filtered from reads) |
+| Aggregate/Filter | Use current version of each document |
+
+---
 
 ### Fixture File Format
 
@@ -1175,6 +1294,7 @@ is complete — it is a one-time reference, not a runtime or build dependency.
 
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
+| 2.2 | 2026-08-25 | Michael Yarichuk | Implemented per-document CoW isolation for efficient multi-fixture support; added `IBaselineDataProvider`, `FileBasedBaselineProvider`, and `DocumentSnapshot` to enable shared baseline with per-fixture mutation tracking |
 | 2.1 | 2026-08-24 | Michael Yarichuk | Merged FilterCompiler + TestFixtures specs under the Mongo.Fakes name; shared filter engine between Core and Server; added `$all` and MongoZen prior-art section |
 | 2.0 | 2026-08-24 | Michael Yarichuk | BsonValue-first, Expression-based FilterCompiler rewrite |
 | 1.0 | 2026-08-23 | Michael Yarichuk | Initial TestFixtures specification |
