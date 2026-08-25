@@ -9,8 +9,8 @@ namespace Mongo.Fakes.Server;
 public sealed class BsonFileBackend : IMongoBackend
 {
     private readonly IBaselineDataProvider _baseline;
-    private readonly Dictionary<string, DocumentSnapshot> _snapshots;
-    private readonly HashSet<string> _deletedIds;
+    private readonly Dictionary<(string Database, string Collection), Dictionary<string, DocumentSnapshot>> _snapshots;
+    private readonly Dictionary<(string Database, string Collection), HashSet<string>> _deletedIds;
     private readonly Dictionary<(string Database, string Collection), TextIndexSpec> _textIndexes;
     private readonly object _lock = new();
 
@@ -39,23 +39,26 @@ public sealed class BsonFileBackend : IMongoBackend
         {
             var result = new List<BsonDocument>();
             var processedIds = new HashSet<string>();
+            var collKey = (database, collection);
+            var deletedIds = GetOrCreateDeletedIds(collKey);
+            var snapshotMap = GetOrCreateSnapshotMap(collKey);
 
             foreach (var doc in baselineData)
             {
                 var idKey = GetSnapshotKey(doc["_id"]);
                 processedIds.Add(idKey);
 
-                if (_deletedIds.Contains(idKey))
+                if (deletedIds.Contains(idKey))
                     continue;
 
-                var snapshot = GetOrCreateSnapshot(idKey, doc);
+                var snapshot = GetOrCreateSnapshot(collKey, idKey, doc);
                 result.Add(snapshot.Current);
             }
 
             // Add any newly inserted documents that aren't in baseline
-            foreach (var kvp in _snapshots)
+            foreach (var kvp in snapshotMap)
             {
-                if (!processedIds.Contains(kvp.Key) && !_deletedIds.Contains(kvp.Key))
+                if (!processedIds.Contains(kvp.Key) && !deletedIds.Contains(kvp.Key))
                 {
                     result.Add(kvp.Value.Current);
                 }
@@ -70,12 +73,33 @@ public sealed class BsonFileBackend : IMongoBackend
         return idValue.ToJson();
     }
 
-    private DocumentSnapshot GetOrCreateSnapshot(string idKey, BsonDocument doc)
+    private Dictionary<string, DocumentSnapshot> GetOrCreateSnapshotMap((string Database, string Collection) collKey)
     {
-        if (!_snapshots.TryGetValue(idKey, out var snapshot))
+        if (!_snapshots.TryGetValue(collKey, out var snapshotMap))
+        {
+            snapshotMap = new();
+            _snapshots[collKey] = snapshotMap;
+        }
+        return snapshotMap;
+    }
+
+    private HashSet<string> GetOrCreateDeletedIds((string Database, string Collection) collKey)
+    {
+        if (!_deletedIds.TryGetValue(collKey, out var deletedIds))
+        {
+            deletedIds = new();
+            _deletedIds[collKey] = deletedIds;
+        }
+        return deletedIds;
+    }
+
+    private DocumentSnapshot GetOrCreateSnapshot((string Database, string Collection) collKey, string idKey, BsonDocument doc)
+    {
+        var snapshotMap = GetOrCreateSnapshotMap(collKey);
+        if (!snapshotMap.TryGetValue(idKey, out var snapshot))
         {
             snapshot = new DocumentSnapshot(doc);
-            _snapshots[idKey] = snapshot;
+            snapshotMap[idKey] = snapshot;
         }
         return snapshot;
     }
@@ -240,6 +264,8 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
+            var collKey = (database, collection);
+            var snapshotMap = GetOrCreateSnapshotMap(collKey);
             var writeErrors = new List<BsonDocument>();
             int insertedCount = 0;
 
@@ -251,7 +277,7 @@ public sealed class BsonFileBackend : IMongoBackend
                     doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
 
                 var idKey = GetSnapshotKey(doc["_id"]);
-                bool isDuplicate = _snapshots.ContainsKey(idKey);
+                bool isDuplicate = snapshotMap.ContainsKey(idKey);
 
                 if (isDuplicate)
                 {
@@ -267,7 +293,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 }
                 else
                 {
-                    _snapshots[idKey] = new DocumentSnapshot(doc);
+                    snapshotMap[idKey] = new DocumentSnapshot(doc);
                     insertedCount++;
                 }
             }
@@ -295,7 +321,10 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
+            var collKey = (database, collection);
             var baselineData = _baseline.GetCollection(database, collection);
+            var snapshotMap = GetOrCreateSnapshotMap(collKey);
+            var deletedIds = GetOrCreateDeletedIds(collKey);
             var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
             var writeErrors = new List<BsonDocument>();
             int matched = 0;
@@ -328,9 +357,19 @@ public sealed class BsonFileBackend : IMongoBackend
                     foreach (var doc in baselineData)
                     {
                         var idKey = GetSnapshotKey(doc["_id"]);
-                        var snapshot = GetOrCreateSnapshot(idKey, doc);
+                        var snapshot = GetOrCreateSnapshot(collKey, idKey, doc);
                         if (predicate(snapshot.Current))
                             matchedKeys.Add(idKey);
+                    }
+
+                    // Also check newly inserted documents not in baseline
+                    foreach (var kvp in snapshotMap)
+                    {
+                        if (!baselineData.Any(d => GetSnapshotKey(d["_id"]) == kvp.Key) && !deletedIds.Contains(kvp.Key))
+                        {
+                            if (predicate(kvp.Value.Current))
+                                matchedKeys.Add(kvp.Key);
+                        }
                     }
 
                     if (matchedKeys.Count > 0)
@@ -339,7 +378,7 @@ public sealed class BsonFileBackend : IMongoBackend
                         for (int j = 0; j < docsToUpdate; j++)
                         {
                             var idKey = matchedKeys[j];
-                            var snapshot = _snapshots[idKey];
+                            var snapshot = snapshotMap[idKey];
                             var oldDoc = snapshot.Current;
 
                             BsonDocument newDoc;
@@ -388,7 +427,7 @@ public sealed class BsonFileBackend : IMongoBackend
                         }
 
                         var idKey = GetSnapshotKey(newDoc["_id"]);
-                        _snapshots[idKey] = new DocumentSnapshot(newDoc);
+                        snapshotMap[idKey] = new DocumentSnapshot(newDoc);
                         upserted.Add(new BsonDocument { { "index", i }, { "_id", newDoc["_id"] } });
                         matched++;
                     }
@@ -432,7 +471,10 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
+            var collKey = (database, collection);
             var baselineData = _baseline.GetCollection(database, collection);
+            var snapshotMap = GetOrCreateSnapshotMap(collKey);
+            var deletedIds = GetOrCreateDeletedIds(collKey);
             var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
             int deletedCount = 0;
 
@@ -454,18 +496,18 @@ public sealed class BsonFileBackend : IMongoBackend
                     foreach (var doc in baselineData)
                     {
                         var idKey = GetSnapshotKey(doc["_id"]);
-                        if (!_deletedIds.Contains(idKey))
+                        if (!deletedIds.Contains(idKey))
                         {
-                            var snapshot = GetOrCreateSnapshot(idKey, doc);
+                            var snapshot = GetOrCreateSnapshot(collKey, idKey, doc);
                             if (predicate(snapshot.Current))
                                 matchedKeys.Add(idKey);
                         }
                     }
 
                     // Also check newly inserted documents
-                    foreach (var kvp in _snapshots)
+                    foreach (var kvp in snapshotMap)
                     {
-                        if (!baselineData.Any(d => GetSnapshotKey(d["_id"]) == kvp.Key) && !_deletedIds.Contains(kvp.Key))
+                        if (!baselineData.Any(d => GetSnapshotKey(d["_id"]) == kvp.Key) && !deletedIds.Contains(kvp.Key))
                         {
                             if (predicate(kvp.Value.Current))
                                 matchedKeys.Add(kvp.Key);
@@ -474,13 +516,13 @@ public sealed class BsonFileBackend : IMongoBackend
 
                     if (limit == 1 && matchedKeys.Count > 0)
                     {
-                        _deletedIds.Add(matchedKeys[0]);
+                        deletedIds.Add(matchedKeys[0]);
                         deletedCount++;
                     }
                     else if (limit == 0)
                     {
                         foreach (var key in matchedKeys)
-                            _deletedIds.Add(key);
+                            deletedIds.Add(key);
                         deletedCount += matchedKeys.Count;
                     }
                 }
@@ -514,7 +556,15 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
-            var collectionNames = _baseline.GetCollections(database);
+            var collectionNames = new HashSet<string>(_baseline.GetCollections(database));
+
+            // Also include collections that exist purely in snapshots (inserted during test run)
+            foreach (var kvp in _snapshots)
+            {
+                if (kvp.Key.Database == database)
+                    collectionNames.Add(kvp.Key.Collection);
+            }
+
             if (collectionNames.Count == 0)
             {
                 return new BsonDocument
@@ -755,6 +805,9 @@ public sealed class BsonFileBackend : IMongoBackend
 
                 lock (_lock)
                 {
+                    var collKey = (database, collection);
+                    var snapshotMap = GetOrCreateSnapshotMap(collKey);
+
                     BsonDocument newDoc;
                     if (isOperatorUpdate)
                     {
@@ -781,7 +834,7 @@ public sealed class BsonFileBackend : IMongoBackend
                     }
 
                     var idKey = GetSnapshotKey(newDoc["_id"]);
-                    _snapshots[idKey] = new DocumentSnapshot(newDoc);
+                    snapshotMap[idKey] = new DocumentSnapshot(newDoc);
                     return new BsonDocument
                     {
                         { "ok", 1.0 },
@@ -805,7 +858,8 @@ public sealed class BsonFileBackend : IMongoBackend
 
             lock (_lock)
             {
-                var snapshot = GetOrCreateSnapshot(foundDocKey, foundDoc);
+                var collKey = (database, collection);
+                var snapshot = GetOrCreateSnapshot(collKey, foundDocKey, foundDoc);
                 BsonDocument newDoc;
                 if (isOperatorUpdate)
                 {
@@ -825,7 +879,9 @@ public sealed class BsonFileBackend : IMongoBackend
         {
             lock (_lock)
             {
-                _deletedIds.Add(foundDocKey);
+                var collKey = (database, collection);
+                var deletedIds = GetOrCreateDeletedIds(collKey);
+                deletedIds.Add(foundDocKey);
             }
         }
 
