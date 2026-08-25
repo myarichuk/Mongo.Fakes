@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.5.0...Mongo.Fakes-v0.6.0) (2026-08-25)
+
+
+### Features
+
+* add findAndModify operator updates, upsert, and returnDocument.After ([53bcfd9](https://github.com/myarichuk/Mongo.Fakes/commit/53bcfd91d4edbd516a441bcbb505dd3cb433ed2d))
+* enable computed fields in $project stage ([8202f7d](https://github.com/myarichuk/Mongo.Fakes/commit/8202f7d58a383e896497f56a655ad792688927a8))
+* implement $arrayElemAt operator in aggregation expressions ([8818b9a](https://github.com/myarichuk/Mongo.Fakes/commit/8818b9a248abeef685fe29e96cf5b363de146600))
+
+
+### Bug Fixes
+
+* handle array traversal in BsonPath SetValueByPath and RemoveValueByPath ([205eb0c](https://github.com/myarichuk/Mongo.Fakes/commit/205eb0cbc91228f3ae121ef9681ba95b294b5b82))
+
 ## [0.5.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.4.0...Mongo.Fakes-v0.5.0) (2026-08-25)
 
 
