@@ -10,7 +10,14 @@ internal sealed class Projector
     private readonly bool _isInclusion;
     private readonly bool _hasIdField;
 
-    public Projector(BsonDocument projectionSpec)
+    // Within a find()-style projection, { field: { $meta: ... } } is an additive computed field:
+    // it does not restrict the result to only the specified fields, unlike other computed fields
+    // (or any field in an aggregation $project stage, where computed fields are always restrictive).
+    private static bool IsMetaField(BsonValue value) =>
+        value.IsBsonDocument && value.AsBsonDocument.ElementCount == 1 &&
+        value.AsBsonDocument.GetElement(0).Name == "$meta";
+
+    public Projector(BsonDocument projectionSpec, bool isAggregateProject = false)
     {
         _projectionSpec = projectionSpec;
         _hasIdField = projectionSpec.Contains("_id");
@@ -26,6 +33,9 @@ internal sealed class Projector
 
             if (!isComputedField && !element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
                 throw new NotSupportedException("computed projection fields are not supported");
+
+            if (!isAggregateProject && IsMetaField(element.Value))
+                continue;
 
             bool isInclusion = isComputedField || element.Value.ToBoolean();
             if (inclusionMode == null)
@@ -76,7 +86,15 @@ internal sealed class Projector
 
             foreach (var element in _projectionSpec.Elements)
             {
-                if (!element.Value.ToBoolean())
+                bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
+                    element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+
+                if (isComputedField)
+                {
+                    var computedValue = ExpressionEvaluator.Evaluate(element.Value, doc);
+                    BsonPath.SetValueByPath(result, element.Name, computedValue);
+                }
+                else if (!element.Value.ToBoolean())
                 {
                     if (element.Name == "_id")
                         result.Remove("_id");
