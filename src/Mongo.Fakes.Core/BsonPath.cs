@@ -60,6 +60,8 @@ public static class BsonPath
         for (int i = 0; i < parts.Length - 1; i++)
         {
             var part = parts[i];
+            var nextPart = parts[i + 1];
+            var nextIsNumeric = int.TryParse(nextPart, out _);
 
             if (current is BsonArray array)
             {
@@ -68,8 +70,11 @@ public static class BsonPath
                     while (array.Count <= index)
                         array.Add(BsonNull.Value);
 
-                    if (array[index].BsonType == BsonType.Null || array[index] is not BsonDocument)
-                        array[index] = new BsonDocument();
+                    // Determine what to create based on the next part
+                    if (array[index].BsonType == BsonType.Null || array[index] is not (BsonDocument or BsonArray))
+                    {
+                        array[index] = nextIsNumeric ? new BsonArray() : new BsonDocument();
+                    }
 
                     current = array[index];
                 }
@@ -80,7 +85,9 @@ public static class BsonPath
                         if (array[j] is BsonDocument subdoc)
                         {
                             if (!subdoc.TryGetValue(part, out _))
-                                subdoc[part] = new BsonDocument();
+                            {
+                                subdoc[part] = nextIsNumeric ? new BsonArray() : new BsonDocument();
+                            }
 
                             current = subdoc[part];
                             break;
@@ -92,15 +99,17 @@ public static class BsonPath
             {
                 if (!bdoc.TryGetValue(part, out var next))
                 {
-                    next = new BsonDocument();
+                    next = nextIsNumeric ? new BsonArray() : new BsonDocument();
+                    bdoc[part] = next;
+                }
+                else if (next is not (BsonDocument or BsonArray))
+                {
+                    // Existing value is neither document nor array, replace based on next part
+                    next = nextIsNumeric ? new BsonArray() : new BsonDocument();
                     bdoc[part] = next;
                 }
 
-                if (next is not BsonDocument nextDoc)
-                    nextDoc = new BsonDocument();
-
-                bdoc[part] = nextDoc;
-                current = nextDoc;
+                current = next;
             }
         }
 
