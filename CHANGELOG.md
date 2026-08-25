@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.6...Mongo.Fakes-v0.3.0) (2026-08-25)
+
+
+### Features
+
+* **Phase 2 partial:** add missing commands (finding 15) ([27e8fa7](https://github.com/myarichuk/Mongo.Fakes/commit/27e8fa74a127ca12bfcb69014db4ab525b023fe9))
+* **Phase 2:** complete findings 16-19 ([7f53b46](https://github.com/myarichuk/Mongo.Fakes/commit/7f53b46cf8ab385c8b24d49b885fbab10c78da64))
+* **Phase 3:** infra and docs (findings 20-23) ([3a29f21](https://github.com/myarichuk/Mongo.Fakes/commit/3a29f213e2704d3185adbdf93c214ceba0f28398))
+* **Phase 4:** add regression test suite ([fabb65b](https://github.com/myarichuk/Mongo.Fakes/commit/fabb65be57c6613caf9ab191b84c6e419d9f3c70))
+
+
+### Bug Fixes
+
+* &lt;facepalm&gt; fix release CI config ([ec509f7](https://github.com/myarichuk/Mongo.Fakes/commit/ec509f7488e6da213b8b528d17fd1ee84fa21c6a))
+* correct extra-files key in release-please config ([2d35fb9](https://github.com/myarichuk/Mongo.Fakes/commit/2d35fb9cc1bd52304553c18872bcea0a9d30ae30))
+* even more &lt;facepalm&gt; - revert earlier 'improvement' in CI ([1fc4961](https://github.com/myarichuk/Mongo.Fakes/commit/1fc49617ad133b9e649a69ceae0c6475116fddf2))
+* **Phase 1:** stop returning wrong answers (findings 1-14) ([f7f85fb](https://github.com/myarichuk/Mongo.Fakes/commit/f7f85fbf9e155cb695bc68c756debb44a6bb3092))
+
 ## [0.2.6](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.2.5...Mongo.Fakes-v0.2.6) (2026-08-24)
 
 
