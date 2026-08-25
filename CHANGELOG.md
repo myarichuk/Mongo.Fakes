@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.3](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.2...Mongo.Fakes-v0.7.3) (2026-08-25)
+
+
+### Bug Fixes
+
+* stop stripping _id in exclusion-mode projections ([d2f47fc](https://github.com/myarichuk/Mongo.Fakes/commit/d2f47fce466c86c2119edbd90ea6298791ab8906))
+* treat $meta projection fields as additive, not restrictive ([eac3452](https://github.com/myarichuk/Mongo.Fakes/commit/eac34524c42fed6b0d3b9507f20ada75115d7f25))
+
 ## [0.7.2](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.1...Mongo.Fakes-v0.7.2) (2026-08-25)
 
 
