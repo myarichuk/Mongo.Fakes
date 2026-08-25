@@ -1,4 +1,5 @@
 using Mongo.Fakes.Core;
+using Mongo.Fakes.Server.Aggregation;
 using MongoDB.Bson;
 
 namespace Mongo.Fakes.Server.Query;
@@ -20,10 +21,13 @@ internal sealed class Projector
             if (element.Name == "_id")
                 continue;
 
-            if (!element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
+            bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
+                element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+
+            if (!isComputedField && !element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
                 throw new NotSupportedException("computed projection fields are not supported");
 
-            bool isInclusion = element.Value.ToBoolean();
+            bool isInclusion = isComputedField || element.Value.ToBoolean();
             if (inclusionMode == null)
                 inclusionMode = isInclusion;
             else if (inclusionMode != isInclusion)
@@ -44,7 +48,15 @@ internal sealed class Projector
                 if (element.Name == "_id" && !element.Value.ToBoolean())
                     continue;
 
-                if (element.Value.ToBoolean())
+                bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
+                    element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+
+                if (isComputedField)
+                {
+                    var computedValue = ExpressionEvaluator.Evaluate(element.Value, doc);
+                    BsonPath.SetValueByPath(result, element.Name, computedValue);
+                }
+                else if (element.Value.ToBoolean())
                 {
                     var value = BsonPath.GetValue(doc, element.Name);
                     if (value != null)
