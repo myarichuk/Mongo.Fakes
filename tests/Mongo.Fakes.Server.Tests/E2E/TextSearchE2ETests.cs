@@ -156,4 +156,33 @@ public class TextSearchE2ETests : IAsyncLifetime
         Assert.Equal(1, results[0]["_id"].AsInt32);
         Assert.Equal(3, results[1]["_id"].AsInt32);
     }
+
+    [Fact]
+    public async Task Find_WithMetaTextScoreProjection_IsAdditiveNotRestrictive()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search6");
+
+        await coll.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+
+        var docs = new[]
+        {
+            new BsonDocument { { "_id", 1 }, { "title", "hello world" }, { "status", "active" } },
+            new BsonDocument { { "_id", 2 }, { "title", "goodbye" }, { "status", "inactive" } }
+        };
+        await coll.InsertManyAsync(docs);
+
+        var projection = new BsonDocument { { "score", new BsonDocument { { "$meta", "textScore" } } } };
+        var results = await coll.Find(Builders<BsonDocument>.Filter.Text("hello"))
+            .Project(projection)
+            .ToListAsync();
+
+        Assert.Single(results);
+        var doc = results[0];
+        Assert.True(doc.Contains("_id"));
+        Assert.True(doc.Contains("title"));
+        Assert.True(doc.Contains("status"));
+        Assert.True(doc.Contains("score"));
+    }
 }

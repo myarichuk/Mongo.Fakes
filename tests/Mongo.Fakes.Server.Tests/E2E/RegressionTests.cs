@@ -165,4 +165,31 @@ public class RegressionTests : IAsyncLifetime
         Assert.NotNull(ping);
         Assert.Equal(1.0, ping["ok"].AsDouble);
     }
+
+    [Fact]
+    public async Task AggregateProject_ExclusionWithoutIdField_KeepsId()
+    {
+        // Regression: Projector's exclusion mode was unconditionally stripping _id whenever
+        // the projection spec didn't mention "_id" explicitly. Real Mongo keeps _id by default
+        // in exclusion mode unless the spec explicitly says { _id: 0 }. The dropped _id broke
+        // any pipeline stage after $project that relied on it (e.g. a later $match on _id).
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("projectexclusion");
+
+        var doc = new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "joinedReports", "x" }, { "keep", "y" } };
+        await collection.InsertOneAsync(doc);
+
+        var pipeline = new MongoDB.Bson.BsonDocument[]
+        {
+            new() { { "$project", new MongoDB.Bson.BsonDocument { { "joinedReports", 0 } } } },
+            new() { { "$match", new MongoDB.Bson.BsonDocument { { "_id", 1 } } } }
+        };
+
+        var cursor = await collection.AggregateAsync<MongoDB.Bson.BsonDocument>(pipeline);
+        var results = await cursor.ToListAsync();
+
+        Assert.Single(results);
+        Assert.Equal(1, results[0]["_id"].AsInt32);
+        Assert.True(results[0].Contains("keep"));
+        Assert.False(results[0].Contains("joinedReports"));
+    }
 }

@@ -102,9 +102,6 @@ internal sealed class Projector
                         BsonPath.RemoveValueByPath(result, element.Name);
                 }
             }
-
-            if (!_hasIdField && result.Contains("_id"))
-                result.Remove("_id");
         }
 
         return result;
