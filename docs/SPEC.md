@@ -100,6 +100,7 @@ for free.
 | `$exists` | Field presence | Null vs missing distinction |
 | `$and` | Logical AND (implicit + explicit) | Implicit: multiple fields. Explicit: `{ $and: [...] }` |
 | `$or` | Logical OR | `{ $or: [cond1, cond2, ...] }` |
+| `$nor` | Logical NOR | `{ $nor: [cond1, cond2, ...] }` |
 | `$not` | Logical NOT | `{ field: { $not: { $gt: 5 } } }` |
 | `$type` | BSON type check | Uses BsonType enum + aliases |
 | `$regex` | Pattern matching | Basic PCRE subset; flags: i, m, s, x |
@@ -118,12 +119,12 @@ Server-only, on top of the shared filter engine:
 | Projection (`$project` equivalent) | Field inclusion/exclusion |
 | Sorting, `$skip`, `$limit` | Result ordering/slicing |
 | `$match`, `$project`, `$sort`, `$skip`, `$limit`, `$group`, `$unwind` | Aggregation pipeline stages |
+| SCRAM-SHA-256 auth (optional) | `MongoFakeServer(backend, username:, password:)`; requires the driver to authenticate with exactly that credential — the server verifies a real SCRAM proof, it cannot accept an arbitrary password. Data commands are gated; handshake/admin commands are not. |
 
 ### Out of Scope (Explicit)
 
 | Feature | Rationale |
 |---------|-----------|
-| `$nor` | Low priority; use `{ $and: [ { $nor: ... } ] }` |
 | `$text` | Text search; requires indexing |
 | `$where` | JavaScript eval; security/correctness nightmare |
 | `$geoWithin`, `$near` | Geospatial; specialized |
@@ -135,7 +136,7 @@ Server-only, on top of the shared filter engine:
 | Transactions / ACID | Not applicable to a single-threaded in-memory double |
 | Indexing / query optimization | Fixtures are small; linear scan acceptable |
 | Replication / sharding | Not relevant for single-node test doubles |
-| Authentication / authorization | Tests don't require security; disabled by default |
+| Authorization (roles/privileges) | Not relevant for a single-fixture test double |
 | Cursor tailing / change streams | Not relevant for test scenarios |
 | Complex aggregation stages (`$facet`, `$bucket`, `$redact`, ...) | Add incrementally if needed |
 
@@ -1010,7 +1011,9 @@ In-memory only; not persisted to fixture files.
 
 Note: `n` (not `nMatched`) is the count of matched + upserted documents. `nModified` is the count of actually modified documents.
 
-Only full document replacement in v1 (`$set`-style partial updates not implemented).
+Full document replacement, or operator-style updates via `$set`, `$unset`, `$inc`, `$mul`,
+`$min`, `$max`, `$push` (with `$each`/`$sort`/`$slice`/`$position`), `$pull`, `$pullAll`,
+`$pop`, `$addToSet` (with `$each`), `$rename`, `$currentDate`, `$setOnInsert`.
 
 ### `delete`
 
