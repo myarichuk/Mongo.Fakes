@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "simple",
+  "pull-request-title-pattern": "chore(release): ${version}",
   "packages": {
     ".": {
       "package-name": "Mongo.Fakes",
@@ -10,7 +11,7 @@
       "extra-files": [
         {
           "type": "xml",
-          "file": "Directory.Build.props",
+          "path": "Directory.Build.props",
           "xpath": "/Project/PropertyGroup/VersionPrefix"
         }
       ]
