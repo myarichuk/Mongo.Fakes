@@ -86,6 +86,7 @@ internal sealed class ExpressionEvaluator
             "$and" => EvalAnd(args, doc, variables),
             "$or" => EvalOr(args, doc, variables),
             "$not" => EvalNot(args, doc, variables),
+            "$meta" => EvalMeta(args, doc),
             _ => throw new NotSupportedException($"Operator {op} not supported in expression context.")
         };
     }
@@ -367,5 +368,20 @@ internal sealed class ExpressionEvaluator
     {
         var val = Evaluate(args, doc, variables);
         return IsTruthy(val) ? BsonBoolean.False : BsonBoolean.True;
+    }
+
+    private static BsonValue EvalMeta(BsonValue args, BsonDocument doc)
+    {
+        if (args is not BsonString metaArg)
+            return BsonNull.Value;
+
+        if (metaArg.Value == "textScore")
+        {
+            if (doc.TryGetValue(Query.TextSearchFilter.ScoreField, out var score) && score.IsDouble)
+                return score;
+            return BsonNull.Value;
+        }
+
+        return BsonNull.Value;
     }
 }

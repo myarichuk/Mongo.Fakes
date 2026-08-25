@@ -10,11 +10,13 @@ internal sealed class AggregationPipeline
     private readonly FilterCompiler _filterCompiler = new();
     private readonly Func<string, IReadOnlyList<BsonDocument>>? _resolveCollection;
     private readonly IReadOnlyDictionary<string, BsonValue>? _variables;
+    private readonly TextIndexSpec? _textIndex;
 
-    public AggregationPipeline(Func<string, IReadOnlyList<BsonDocument>>? resolveCollection = null, IReadOnlyDictionary<string, BsonValue>? variables = null)
+    public AggregationPipeline(Func<string, IReadOnlyList<BsonDocument>>? resolveCollection = null, IReadOnlyDictionary<string, BsonValue>? variables = null, TextIndexSpec? textIndex = null)
     {
         _resolveCollection = resolveCollection;
         _variables = variables;
+        _textIndex = textIndex;
     }
 
     public IEnumerable<BsonDocument> Execute(IEnumerable<BsonDocument> data, BsonArray pipeline)
@@ -45,17 +47,37 @@ internal sealed class AggregationPipeline
                 "$set" => ExecuteAddFields(current, (BsonDocument)stageElem.Value),
                 "$replaceRoot" => ExecuteReplaceRoot(current, (BsonDocument)stageElem.Value),
                 "$lookup" => ExecuteLookup(current, (BsonDocument)stageElem.Value),
+                "$setWindowFields" => ExecuteSetWindowFields(current, (BsonDocument)stageElem.Value),
                 _ => throw new MongoCommandException(ErrorCodes.UnrecognizedPipelineStage, "UnrecognizedPipelineStage", $"Unknown stage: {stageElem.Name}")
             };
         }
+
+        // Strip hidden text score field as final step
+        current = current.Select(d =>
+        {
+            var doc = (BsonDocument)d.DeepClone();
+            doc.Remove(Query.TextSearchFilter.ScoreField);
+            return doc;
+        });
 
         return current;
     }
 
     private IEnumerable<BsonDocument> ExecuteMatch(IEnumerable<BsonDocument> data, BsonDocument filter)
     {
+        var results = data;
+
+        // Apply text search if present
+        if (TextSearchFilter.TryExtract(filter, out var searchTerms, out var remainingFilter))
+        {
+            results = TextSearchFilter.Apply(results, searchTerms!, _textIndex);
+            filter = remainingFilter;
+        }
+
         var predicate = _filterCompiler.Compile(filter, _variables);
-        return data.Where(predicate);
+        results = results.Where(predicate);
+
+        return results;
     }
 
     private IEnumerable<BsonDocument> ExecuteProject(IEnumerable<BsonDocument> data, BsonDocument projection)
@@ -96,6 +118,12 @@ internal sealed class AggregationPipeline
     {
         var groupStage = new GroupStage(stageDoc);
         return groupStage.Execute(data);
+    }
+
+    private IEnumerable<BsonDocument> ExecuteSetWindowFields(IEnumerable<BsonDocument> data, BsonDocument stageDoc)
+    {
+        var windowStage = new SetWindowFieldsStage(stageDoc);
+        return windowStage.Execute(data);
     }
 
     private IEnumerable<BsonDocument> ExecuteUnwind(IEnumerable<BsonDocument> data, BsonValue spec)

@@ -14,10 +14,20 @@ public sealed class BsonQueryExecutor
         BsonDocument? projection = null,
         BsonDocument? sort = null,
         int skip = 0,
-        int limit = 0)
+        int limit = 0,
+        TextIndexSpec? textIndex = null)
     {
+        var results = data;
+
+        // Apply text search if present
+        if (TextSearchFilter.TryExtract(filter, out var searchTerms, out var remainingFilter))
+        {
+            results = TextSearchFilter.Apply(results, searchTerms!, textIndex);
+            filter = remainingFilter;
+        }
+
         var predicate = _filterCompiler.Compile(filter);
-        var results = data.Where(predicate);
+        results = results.Where(predicate);
 
         if (sort != null && sort.ElementCount > 0)
         {
@@ -37,13 +47,30 @@ public sealed class BsonQueryExecutor
             results = results.Select(d => projector.Project(d));
         }
 
+        // Strip hidden text score field before returning
+        results = results.Select(d =>
+        {
+            var doc = (BsonDocument)d.DeepClone();
+            doc.Remove(TextSearchFilter.ScoreField);
+            return doc;
+        });
+
         return results;
     }
 
-    public int ExecuteCount(IEnumerable<BsonDocument> data, BsonDocument filter, int skip = 0, int limit = 0)
+    public int ExecuteCount(IEnumerable<BsonDocument> data, BsonDocument filter, int skip = 0, int limit = 0, TextIndexSpec? textIndex = null)
     {
+        var results = data;
+
+        // Apply text search if present
+        if (TextSearchFilter.TryExtract(filter, out var searchTerms, out var remainingFilter))
+        {
+            results = TextSearchFilter.Apply(results, searchTerms!, textIndex);
+            filter = remainingFilter;
+        }
+
         var predicate = _filterCompiler.Compile(filter);
-        var results = data.Where(predicate);
+        results = results.Where(predicate);
 
         if (skip > 0)
             results = results.Skip(skip);

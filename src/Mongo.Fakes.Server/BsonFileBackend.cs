@@ -11,6 +11,7 @@ public sealed class BsonFileBackend : IMongoBackend
     private readonly IBaselineDataProvider _baseline;
     private readonly Dictionary<string, DocumentSnapshot> _snapshots;
     private readonly HashSet<string> _deletedIds;
+    private readonly Dictionary<(string Database, string Collection), TextIndexSpec> _textIndexes;
     private readonly object _lock = new();
 
     public BsonFileBackend(IBaselineDataProvider baseline)
@@ -18,6 +19,7 @@ public sealed class BsonFileBackend : IMongoBackend
         _baseline = baseline;
         _snapshots = new();
         _deletedIds = new();
+        _textIndexes = new();
     }
 
     public BsonFileBackend(string fixtureRootFolder)
@@ -101,7 +103,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 "dropdatabase" => HandleDropDatabase(database),
                 "findandmodify" => HandleFindAndModify(database, command),
                 "distinct" => HandleDistinct(database, command),
-                "createindexes" => HandleNoOp("createindexes"),
+                "createindexes" => HandleCreateIndexes(database, command),
                 "listindexes" => HandleListIndexes(database, command),
                 "create" => HandleNoOp("create"),
                 _ => throw new MongoCommandException(ErrorCodes.CommandNotFound, "CommandNotFound", $"no such cmd: {commandName}")
@@ -134,8 +136,14 @@ public sealed class BsonFileBackend : IMongoBackend
         if (limit < 0)
             limit = Math.Abs(limit);
 
+        TextIndexSpec? textIndex;
+        lock (_lock)
+        {
+            _textIndexes.TryGetValue((database, collection), out textIndex);
+        }
+
         var executor = new BsonQueryExecutor();
-        var results = executor.ExecuteFind(data, filter, projection, sort, skip, limit).ToList();
+        var results = executor.ExecuteFind(data, filter, projection, sort, skip, limit, textIndex).ToList();
 
         return new BsonDocument
         {
@@ -161,8 +169,14 @@ public sealed class BsonFileBackend : IMongoBackend
         int skip = command.TryGetValue("skip", out var sk) ? sk.ToInt32() : 0;
         int limit = command.TryGetValue("limit", out var l) ? l.ToInt32() : 0;
 
+        TextIndexSpec? textIndex;
+        lock (_lock)
+        {
+            _textIndexes.TryGetValue((database, collection), out textIndex);
+        }
+
         var executor = new BsonQueryExecutor();
-        int count = executor.ExecuteCount(data, query, skip, limit);
+        int count = executor.ExecuteCount(data, query, skip, limit, textIndex);
 
         return new BsonDocument
         {
@@ -190,7 +204,13 @@ public sealed class BsonFileBackend : IMongoBackend
         var pipeline = (BsonArray)pipelineValue;
         var data = GetCollection(database, collection);
 
-        var executor = new AggregationPipeline(coll => GetCollection(database, coll));
+        TextIndexSpec? textIndex;
+        lock (_lock)
+        {
+            _textIndexes.TryGetValue((database, collection), out textIndex);
+        }
+
+        var executor = new AggregationPipeline(coll => GetCollection(database, coll), null, textIndex);
         var results = executor.Execute(data, pipeline).ToList();
 
         return new BsonDocument
@@ -559,8 +579,14 @@ public sealed class BsonFileBackend : IMongoBackend
         var data = GetCollection(database, collection);
         var filter = command.TryGetValue("query", out var f) ? (BsonDocument)f : new BsonDocument();
 
+        TextIndexSpec? textIndex;
+        lock (_lock)
+        {
+            _textIndexes.TryGetValue((database, collection), out textIndex);
+        }
+
         var executor = new BsonQueryExecutor();
-        var results = executor.ExecuteFind(data, filter, null, null, 0, 0).ToList();
+        var results = executor.ExecuteFind(data, filter, null, null, 0, 0, textIndex).ToList();
 
         var distinctValues = new HashSet<string>();
         foreach (var doc in results)
@@ -583,6 +609,44 @@ public sealed class BsonFileBackend : IMongoBackend
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'listIndexes' field.");
 
         string collection = collValue.AsString;
+        var indexes = new BsonArray();
+
+        // Always include the default _id index
+        indexes.Add(new BsonDocument
+        {
+            { "v", 2 },
+            { "key", new BsonDocument { { "_id", 1 } } },
+            { "name", "_id_" }
+        });
+
+        // Include text index if one exists for this collection
+        lock (_lock)
+        {
+            if (_textIndexes.TryGetValue((database, collection), out var textIndex))
+            {
+                var keyDoc = new BsonDocument();
+                if (textIndex.IsWildcard)
+                {
+                    keyDoc["$**"] = "text";
+                }
+                else
+                {
+                    foreach (var field in textIndex.Fields)
+                    {
+                        keyDoc[field] = "text";
+                    }
+                }
+
+                indexes.Add(new BsonDocument
+                {
+                    { "v", 2 },
+                    { "key", keyDoc },
+                    { "name", textIndex.Fields.Count > 0 ? $"{string.Join("_", textIndex.Fields)}_text" : "$**_text" },
+                    { "default_language", "english" },
+                    { "textIndexVersion", 3 }
+                });
+            }
+        }
 
         return new BsonDocument
         {
@@ -591,9 +655,67 @@ public sealed class BsonFileBackend : IMongoBackend
             {
                 { "id", 0L },
                 { "ns", $"{database}.{collection}" },
-                { "firstBatch", new BsonArray() }
+                { "firstBatch", indexes }
             }}
         };
+    }
+
+    private BsonDocument HandleCreateIndexes(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("createIndexes", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'createIndexes' field.");
+
+        if (!command.TryGetValue("indexes", out var indexesValue) || !indexesValue.IsBsonArray)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing or invalid 'indexes' field.");
+
+        string collection = collValue.AsString;
+        var indexesArray = (BsonArray)indexesValue;
+
+        lock (_lock)
+        {
+            int numIndexesBefore = _textIndexes.ContainsKey((database, collection)) ? 1 : 0;
+            int numIndexesAfter = numIndexesBefore;
+
+            foreach (var indexElem in indexesArray)
+            {
+                if (indexElem is not BsonDocument indexDoc)
+                    continue;
+
+                if (!indexDoc.TryGetValue("key", out var keyValue) || keyValue is not BsonDocument keyDoc)
+                    continue;
+
+                var textIndex = TextIndexSpec.TryCreate(keyDoc);
+                if (textIndex != null)
+                {
+                    var key = (database, collection);
+                    if (_textIndexes.TryGetValue(key, out var existing))
+                    {
+                        // Check if it's identical (idempotent)
+                        if (existing.IsWildcard == textIndex.IsWildcard &&
+                            existing.Fields.SequenceEqual(textIndex.Fields))
+                        {
+                            continue; // Already exists, no error
+                        }
+
+                        // Genuine conflict: two different text indexes
+                        throw new MongoCommandException(
+                            ErrorCodes.BadValue,
+                            "BadValue",
+                            "Only one text index is allowed per collection.");
+                    }
+
+                    _textIndexes[key] = textIndex;
+                    numIndexesAfter++;
+                }
+            }
+
+            return new BsonDocument
+            {
+                { "ok", 1.0 },
+                { "numIndexesBefore", numIndexesBefore },
+                { "numIndexesAfter", numIndexesAfter }
+            };
+        }
     }
 
     private BsonDocument HandleFindAndModify(string database, BsonDocument command)
@@ -614,8 +736,15 @@ public sealed class BsonFileBackend : IMongoBackend
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Cannot specify both remove and update/upsert in findAndModify");
 
         var data = GetCollection(database, collection);
+
+        TextIndexSpec? textIndex;
+        lock (_lock)
+        {
+            _textIndexes.TryGetValue((database, collection), out textIndex);
+        }
+
         var executor = new BsonQueryExecutor();
-        var results = executor.ExecuteFind(data, filter, null, sort, 0, 1).ToList();
+        var results = executor.ExecuteFind(data, filter, null, sort, 0, 1, textIndex).ToList();
 
         if (results.Count == 0)
         {

@@ -118,7 +118,7 @@ Server-only, on top of the shared filter engine:
 | `find`, `aggregate`, `countDocuments`, `insert`, `update`, `delete` | In-memory only; no persistence |
 | Projection (`$project` equivalent) | Field inclusion/exclusion |
 | Sorting, `$skip`, `$limit` | Result ordering/slicing |
-| `$match`, `$project`, `$sort`, `$skip`, `$limit`, `$group`, `$unwind` | Aggregation pipeline stages |
+| `$match`, `$project`, `$sort`, `$skip`, `$limit`, `$group`, `$unwind`, `$setWindowFields` | Aggregation pipeline stages; `$text` search supported at top level of filter |
 | GridFS (`MongoDB.Driver.GridFSBucket`) | Supported transparently via existing `insert`, `find`, `update`, `delete`, and `createIndexes` commands; `listIndexes` returns empty index list. No bucket-specific server code required. |
 | SCRAM-SHA-256 auth (optional) | `MongoFakeServer(backend, username:, password:)`; requires the driver to authenticate with exactly that credential — the server verifies a real SCRAM proof, it cannot accept an arbitrary password. Data commands are gated; handshake/admin commands are not. |
 
@@ -126,7 +126,6 @@ Server-only, on top of the shared filter engine:
 
 | Feature | Rationale |
 |---------|-----------|
-| `$text` | Text search; requires indexing |
 | `$where` | JavaScript eval; security/correctness nightmare |
 | `$geoWithin`, `$near` | Geospatial; specialized |
 | `$size` | Array length check; low priority |
@@ -135,7 +134,7 @@ Server-only, on top of the shared filter engine:
 | `$jsonSchema` | Schema validation; separate concern |
 | `$bits*` | Bitwise; low priority |
 | Transactions / ACID | Not applicable to a single-threaded in-memory double |
-| Indexing / query optimization | Fixtures are small; linear scan acceptable |
+| Secondary-index query planning | Fixtures are small; linear scan acceptable. Single text-index support now exists for `$text` search. |
 | Replication / sharding | Not relevant for single-node test doubles |
 | Authorization (roles/privileges) | Not relevant for a single-fixture test double |
 | Cursor tailing / change streams | Not relevant for test scenarios |
@@ -149,6 +148,23 @@ Server-only, on top of the shared filter engine:
 3. **Write operations with full semantics:** in-memory only, no persistence, no
    `$set`-style partial updates in v1 (full-document replacement only)
 4. **Not a MongoDB reimplementation, not production-grade, not a learning tool**
+
+### Limitations
+
+#### `$text` Search
+
+- **Recognized only at top level:** `$text` is recognized only as a top-level filter key, not inside `$and`/`$or` conditions
+- **Single text index per collection:** Only one text index is permitted per collection; attempting to create a second one will error
+- **Case-insensitive, whitespace-split terms:** Search tokens are split on whitespace and matched case-insensitively against document text
+- **OR semantics:** Multiple search terms are OR'd (document matches if any term is found)
+- **Scoring:** Text score is computed as the sum of term occurrence counts across indexed fields; exact weighting differs from MongoDB but is monotonic and deterministic
+
+#### `$setWindowFields`
+
+- **Output order:** Results are returned in partition order (as partitioned), with documents within each partition in sorted order (if `sortBy` specified) or input order (if not); this differs from MongoDB's undefined output order but is deterministic for testing
+- **Window functions supported:** `$documentNumber`, `$rank`, `$sum`, `$avg`, `$min`, `$max`, `$first`, `$last`
+- **Partition and sort:** `partitionBy` and `sortBy` follow MongoDB semantics; `partitionBy` omitted defaults to single partition; `sortBy` omitted means input order within partition
+- **Window bounds:** `documents: [lower, upper]` with integer offsets, `"unbounded"`, or `"current"`; default window is running (0 to current) if `sortBy` present, else whole partition
 
 ---
 

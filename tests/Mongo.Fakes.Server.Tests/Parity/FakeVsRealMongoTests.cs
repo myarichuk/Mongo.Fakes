@@ -369,4 +369,213 @@ public class FakeVsRealMongoTests : IAsyncLifetime
         Assert.Equal(4, realCount);
         Assert.Equal(4, fakeCount);
     }
+
+    [Fact]
+    public async Task TextSearch_Find_Should_Match()
+    {
+        var testDocs = new List<BsonDocument>
+        {
+            BsonDocument.Parse("{ _id: 1, title: 'hello world', author: 'Alice' }"),
+            BsonDocument.Parse("{ _id: 2, title: 'goodbye cruel world', author: 'Bob' }"),
+            BsonDocument.Parse("{ _id: 3, title: 'hello again', author: 'Charlie' }"),
+        };
+
+        var realColl = _realClient!.GetDatabase("testdb").GetCollection<BsonDocument>("textcoll1");
+        var fakeColl = _fakeClient!.GetDatabase("testdb").GetCollection<BsonDocument>("textcoll1");
+
+        await realColl.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+        await fakeColl.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+
+        await SeedCollections(realColl, fakeColl, testDocs);
+
+        var realResults = (await realColl.Find(Builders<BsonDocument>.Filter.Text("hello")).ToListAsync())
+            .OrderBy(d => d["_id"].AsInt32).ToList();
+        var fakeResults = (await fakeColl.Find(Builders<BsonDocument>.Filter.Text("hello")).ToListAsync())
+            .OrderBy(d => d["_id"].AsInt32).ToList();
+
+        Assert.Equal(2, realResults.Count);
+        Assert.Equal(2, fakeResults.Count);
+        Assert.Equal(realResults[0]["_id"].AsInt32, fakeResults[0]["_id"].AsInt32);
+        Assert.Equal(realResults[1]["_id"].AsInt32, fakeResults[1]["_id"].AsInt32);
+    }
+
+    [Fact]
+    public async Task TextSearch_Aggregate_Should_Match()
+    {
+        var testDocs = new List<BsonDocument>
+        {
+            BsonDocument.Parse("{ _id: 1, content: 'apple pie' }"),
+            BsonDocument.Parse("{ _id: 2, content: 'banana split' }"),
+            BsonDocument.Parse("{ _id: 3, content: 'apple crumble' }"),
+        };
+
+        var realColl = _realClient!.GetDatabase("testdb").GetCollection<BsonDocument>("textcoll2");
+        var fakeColl = _fakeClient!.GetDatabase("testdb").GetCollection<BsonDocument>("textcoll2");
+
+        await realColl.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("content")));
+        await fakeColl.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("content")));
+
+        await SeedCollections(realColl, fakeColl, testDocs);
+
+        var pipeline = new[]
+        {
+            new BsonDocument { { "$match", new BsonDocument { { "$text", new BsonDocument { { "$search", "apple" } } } } } },
+            new BsonDocument { { "$sort", new BsonDocument { { "_id", 1 } } } }
+        };
+
+        var realCursor = await realColl.AggregateAsync<BsonDocument>(pipeline);
+        var fakeCursor = await fakeColl.AggregateAsync<BsonDocument>(pipeline);
+
+        var realResults = await realCursor.ToListAsync();
+        var fakeResults = await fakeCursor.ToListAsync();
+
+        Assert.Equal(2, realResults.Count);
+        Assert.Equal(2, fakeResults.Count);
+        Assert.Equal(realResults[0]["_id"].AsInt32, fakeResults[0]["_id"].AsInt32);
+        Assert.Equal(realResults[1]["_id"].AsInt32, fakeResults[1]["_id"].AsInt32);
+    }
+
+    [Fact]
+    public async Task SetWindowFields_DocumentNumber_Should_Match()
+    {
+        var testDocs = new List<BsonDocument>
+        {
+            BsonDocument.Parse("{ _id: 1, department: 'Sales', salary: 5000 }"),
+            BsonDocument.Parse("{ _id: 2, department: 'Sales', salary: 6000 }"),
+            BsonDocument.Parse("{ _id: 3, department: 'Engineering', salary: 8000 }"),
+        };
+
+        var realColl = _realClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll1");
+        var fakeColl = _fakeClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll1");
+
+        await SeedCollections(realColl, fakeColl, testDocs);
+
+        var pipeline = new[]
+        {
+            new BsonDocument { { "$sort", new BsonDocument { { "_id", 1 } } } },
+            new BsonDocument
+            {
+                {
+                    "$setWindowFields", new BsonDocument
+                    {
+                        { "output", new BsonDocument { { "docNum", new BsonDocument { { "$documentNumber", new BsonDocument() } } } } }
+                    }
+                }
+            }
+        };
+
+        var realCursor = await realColl.AggregateAsync<BsonDocument>(pipeline);
+        var fakeCursor = await fakeColl.AggregateAsync<BsonDocument>(pipeline);
+
+        var realResults = await realCursor.ToListAsync();
+        var fakeResults = await fakeCursor.ToListAsync();
+
+        Assert.Equal(3, realResults.Count);
+        Assert.Equal(3, fakeResults.Count);
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(i + 1, realResults[i]["docNum"].AsInt32);
+            Assert.Equal(i + 1, fakeResults[i]["docNum"].AsInt32);
+        }
+    }
+
+    [Fact]
+    public async Task SetWindowFields_Rank_Should_Match()
+    {
+        var testDocs = new List<BsonDocument>
+        {
+            BsonDocument.Parse("{ _id: 1, score: 100 }"),
+            BsonDocument.Parse("{ _id: 2, score: 90 }"),
+            BsonDocument.Parse("{ _id: 3, score: 90 }"),
+            BsonDocument.Parse("{ _id: 4, score: 80 }")
+        };
+
+        var realColl = _realClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll2");
+        var fakeColl = _fakeClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll2");
+
+        await SeedCollections(realColl, fakeColl, testDocs);
+
+        var pipeline = new[]
+        {
+            new BsonDocument { { "$sort", new BsonDocument { { "score", -1 } } } },
+            new BsonDocument
+            {
+                {
+                    "$setWindowFields", new BsonDocument
+                    {
+                        { "sortBy", new BsonDocument { { "score", -1 } } },
+                        { "output", new BsonDocument { { "rank", new BsonDocument { { "$rank", new BsonDocument() } } } } }
+                    }
+                }
+            }
+        };
+
+        var realCursor = await realColl.AggregateAsync<BsonDocument>(pipeline);
+        var fakeCursor = await fakeColl.AggregateAsync<BsonDocument>(pipeline);
+
+        var realResults = await realCursor.ToListAsync();
+        var fakeResults = await fakeCursor.ToListAsync();
+
+        Assert.Equal(4, realResults.Count);
+        Assert.Equal(4, fakeResults.Count);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.Equal(realResults[i]["rank"].AsInt32, fakeResults[i]["rank"].AsInt32);
+        }
+    }
+
+    [Fact]
+    public async Task SetWindowFields_PartitionedSum_Should_Match()
+    {
+        var testDocs = new List<BsonDocument>
+        {
+            BsonDocument.Parse("{ _id: 1, department: 'Sales', value: 100 }"),
+            BsonDocument.Parse("{ _id: 2, department: 'Sales', value: 200 }"),
+            BsonDocument.Parse("{ _id: 3, department: 'Engineering', value: 300 }"),
+            BsonDocument.Parse("{ _id: 4, department: 'Engineering', value: 400 }")
+        };
+
+        var realColl = _realClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll3");
+        var fakeColl = _fakeClient!.GetDatabase("testdb").GetCollection<BsonDocument>("windcoll3");
+
+        await SeedCollections(realColl, fakeColl, testDocs);
+
+        var pipeline = new[]
+        {
+            new BsonDocument { { "$sort", new BsonDocument { { "_id", 1 } } } },
+            new BsonDocument
+            {
+                {
+                    "$setWindowFields", new BsonDocument
+                    {
+                        { "partitionBy", "$department" },
+                        { "output", new BsonDocument { { "deptTotal", new BsonDocument { { "$sum", "$value" } } } } }
+                    }
+                }
+            }
+        };
+
+        var realCursor = await realColl.AggregateAsync<BsonDocument>(pipeline);
+        var fakeCursor = await fakeColl.AggregateAsync<BsonDocument>(pipeline);
+
+        var realResults = await realCursor.ToListAsync();
+        var fakeResults = await fakeCursor.ToListAsync();
+
+        Assert.Equal(4, realResults.Count);
+        Assert.Equal(4, fakeResults.Count);
+
+        var realSalesTotal = realResults.Where(d => d["department"].AsString == "Sales").First()["deptTotal"].AsInt32;
+        var fakeSalesTotal = fakeResults.Where(d => d["department"].AsString == "Sales").First()["deptTotal"].AsInt32;
+        Assert.Equal(300, realSalesTotal);
+        Assert.Equal(300, fakeSalesTotal);
+
+        var realEngTotal = realResults.Where(d => d["department"].AsString == "Engineering").First()["deptTotal"].AsInt32;
+        var fakeEngTotal = fakeResults.Where(d => d["department"].AsString == "Engineering").First()["deptTotal"].AsInt32;
+        Assert.Equal(700, realEngTotal);
+        Assert.Equal(700, fakeEngTotal);
+    }
 }
