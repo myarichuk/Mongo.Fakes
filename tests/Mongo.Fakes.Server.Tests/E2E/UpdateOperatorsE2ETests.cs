@@ -166,4 +166,85 @@ public class UpdateOperatorsE2ETests : IAsyncLifetime
         Assert.Equal("system", updated["createdBy"].AsString);
         Assert.Equal("updated", updated["name"].AsString);
     }
+
+    [Fact]
+    public async Task Set_ThroughArrayIndex()
+    {
+        await _collection!.InsertOneAsync(new BsonDocument
+        {
+            { "_id", 11 },
+            { "items", new BsonArray { new BsonDocument { { "name", "first" } } } }
+        });
+
+        await _collection.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 11),
+            "{ $set: { 'items.0.updated': true } }");
+
+        var doc = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 11)).FirstAsync();
+        Assert.True(doc["items"].AsBsonArray[0].AsBsonDocument["updated"].AsBoolean);
+    }
+
+    [Fact]
+    public async Task Set_GrowsArrayWithNull()
+    {
+        await _collection!.InsertOneAsync(new BsonDocument
+        {
+            { "_id", 12 },
+            { "scores", new BsonArray { 10, 20 } }
+        });
+
+        await _collection.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 12),
+            "{ $set: { 'scores.5': 50 } }");
+
+        var doc = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 12)).FirstAsync();
+        var scores = doc["scores"].AsBsonArray;
+        Assert.Equal(6, scores.Count);
+        Assert.Equal(10, scores[0].AsInt32);
+        Assert.Equal(20, scores[1].AsInt32);
+        Assert.Equal(BsonType.Null, scores[2].BsonType);
+        Assert.Equal(BsonType.Null, scores[3].BsonType);
+        Assert.Equal(BsonType.Null, scores[4].BsonType);
+        Assert.Equal(50, scores[5].AsInt32);
+    }
+
+    [Fact]
+    public async Task Unset_ThroughArrayIndex()
+    {
+        await _collection!.InsertOneAsync(new BsonDocument
+        {
+            { "_id", 13 },
+            { "items", new BsonArray { new BsonDocument { { "name", "first" }, { "hidden", "yes" } } } }
+        });
+
+        await _collection.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 13),
+            "{ $unset: { 'items.0.hidden': '' } }");
+
+        var doc = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 13)).FirstAsync();
+        var item = doc["items"].AsBsonArray[0].AsBsonDocument;
+        Assert.Equal("first", item["name"].AsString);
+        Assert.False(item.Contains("hidden"));
+    }
+
+    [Fact]
+    public async Task Set_ThroughNestedArrayIndices()
+    {
+        await _collection!.InsertOneAsync(new BsonDocument
+        {
+            { "_id", 14 },
+            { "matrix", new BsonArray
+            {
+                new BsonArray { new BsonDocument { { "value", 1 } } }
+            } }
+        });
+
+        await _collection.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 14),
+            "{ $set: { 'matrix.0.0.value': 99 } }");
+
+        var doc = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 14)).FirstAsync();
+        var value = doc["matrix"].AsBsonArray[0].AsBsonArray[0].AsBsonDocument["value"].AsInt32;
+        Assert.Equal(99, value);
+    }
 }
