@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.0...Mongo.Fakes-v0.7.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* improve BsonPath.SetValueByPath to correctly handle nested arrays and documents ([c7335a7](https://github.com/myarichuk/Mongo.Fakes/commit/c7335a7dcebc2cbe66479502d44121b8932d6c68))
+* rescope snapshot store per (database, collection) and fix HandleUpdate ([42c2044](https://github.com/myarichuk/Mongo.Fakes/commit/42c20449a1ae6852d1036cea090b322652dc1b4b))
+
 ## [0.7.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.6.0...Mongo.Fakes-v0.7.0) (2026-08-25)
 
 
