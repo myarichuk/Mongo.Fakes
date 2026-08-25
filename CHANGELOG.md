@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.4.0...Mongo.Fakes-v0.5.0) (2026-08-25)
+
+
+### Features
+
+* add comprehensive GridFS support and E2E tests ([934ffd1](https://github.com/myarichuk/Mongo.Fakes/commit/934ffd1b6a20edb1732cc8f3d137f3c5e0ebc22b))
+* implement ([0e21b5f](https://github.com/myarichuk/Mongo.Fakes/commit/0e21b5f6e3592e40fe47d37b40cda078be42427c))
+
 ## [0.4.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.3.1...Mongo.Fakes-v0.4.0) (2026-08-25)
 
 
