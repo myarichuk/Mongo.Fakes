@@ -8,29 +8,74 @@ namespace Mongo.Fakes.Server;
 
 public sealed class BsonFileBackend : IMongoBackend
 {
-    private readonly Dictionary<string, Dictionary<string, List<BsonDocument>>> _databases;
+    private readonly IBaselineDataProvider _baseline;
+    private readonly Dictionary<string, DocumentSnapshot> _snapshots;
+    private readonly HashSet<string> _deletedIds;
     private readonly object _lock = new();
 
-    public BsonFileBackend(string fixtureRootFolder)
+    public BsonFileBackend(IBaselineDataProvider baseline)
     {
-        _databases = LoadAllFixtures(fixtureRootFolder);
+        _baseline = baseline;
+        _snapshots = new();
+        _deletedIds = new();
+    }
+
+    public BsonFileBackend(string fixtureRootFolder)
+        : this(new FileBasedBaselineProvider(fixtureRootFolder))
+    {
     }
 
     public BsonFileBackend(string fixtureRootFolder, bool loadFromMongoDump)
+        : this(new FileBasedBaselineProvider(fixtureRootFolder, loadFromMongoDump))
     {
-        _databases = loadFromMongoDump
-            ? LoadFromMongoDump(fixtureRootFolder)
-            : LoadAllFixtures(fixtureRootFolder);
     }
 
     public IReadOnlyList<BsonDocument> GetCollection(string database, string collection)
     {
+        var baselineData = _baseline.GetCollection(database, collection);
         lock (_lock)
         {
-            if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var docs))
-                return docs.Select(d => (BsonDocument)d.DeepClone()).ToList();
-            return [];
+            var result = new List<BsonDocument>();
+            var processedIds = new HashSet<string>();
+
+            foreach (var doc in baselineData)
+            {
+                var idKey = GetSnapshotKey(doc["_id"]);
+                processedIds.Add(idKey);
+
+                if (_deletedIds.Contains(idKey))
+                    continue;
+
+                var snapshot = GetOrCreateSnapshot(idKey, doc);
+                result.Add(snapshot.Current);
+            }
+
+            // Add any newly inserted documents that aren't in baseline
+            foreach (var kvp in _snapshots)
+            {
+                if (!processedIds.Contains(kvp.Key) && !_deletedIds.Contains(kvp.Key))
+                {
+                    result.Add(kvp.Value.Current);
+                }
+            }
+
+            return result;
         }
+    }
+
+    private static string GetSnapshotKey(BsonValue idValue)
+    {
+        return idValue.ToJson();
+    }
+
+    private DocumentSnapshot GetOrCreateSnapshot(string idKey, BsonDocument doc)
+    {
+        if (!_snapshots.TryGetValue(idKey, out var snapshot))
+        {
+            snapshot = new DocumentSnapshot(doc);
+            _snapshots[idKey] = snapshot;
+        }
+        return snapshot;
     }
 
     public async Task<BsonDocument> ExecuteCommandAsync(string database, BsonDocument command, CancellationToken ct)
@@ -175,18 +220,6 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
-            if (!_databases.TryGetValue(database, out var db))
-            {
-                db = new Dictionary<string, List<BsonDocument>>();
-                _databases[database] = db;
-            }
-
-            if (!db.TryGetValue(collection, out var collDocs))
-            {
-                collDocs = new List<BsonDocument>();
-                db[collection] = collDocs;
-            }
-
             var writeErrors = new List<BsonDocument>();
             int insertedCount = 0;
 
@@ -197,8 +230,8 @@ public sealed class BsonFileBackend : IMongoBackend
                 if (!doc.Contains("_id"))
                     doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
 
-                var idValue = doc["_id"];
-                bool isDuplicate = collDocs.Any(d => d["_id"].Equals(idValue));
+                var idKey = GetSnapshotKey(doc["_id"]);
+                bool isDuplicate = _snapshots.ContainsKey(idKey);
 
                 if (isDuplicate)
                 {
@@ -214,7 +247,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 }
                 else
                 {
-                    collDocs.Add(doc);
+                    _snapshots[idKey] = new DocumentSnapshot(doc);
                     insertedCount++;
                 }
             }
@@ -242,18 +275,7 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
-            if (!_databases.TryGetValue(database, out var db))
-            {
-                db = new Dictionary<string, List<BsonDocument>>();
-                _databases[database] = db;
-            }
-
-            if (!db.TryGetValue(collection, out var collDocs))
-            {
-                collDocs = new List<BsonDocument>();
-                db[collection] = collDocs;
-            }
-
+            var baselineData = _baseline.GetCollection(database, collection);
             var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
             var writeErrors = new List<BsonDocument>();
             int matched = 0;
@@ -281,21 +303,24 @@ public sealed class BsonFileBackend : IMongoBackend
                 try
                 {
                     var predicate = filterCompiler.Compile(filter);
-                    var matchedIndices = new List<int>();
-                    for (int idx = 0; idx < collDocs.Count; idx++)
+                    var matchedKeys = new List<string>();
+
+                    foreach (var doc in baselineData)
                     {
-                        if (predicate(collDocs[idx]))
-                            matchedIndices.Add(idx);
+                        var idKey = GetSnapshotKey(doc["_id"]);
+                        var snapshot = GetOrCreateSnapshot(idKey, doc);
+                        if (predicate(snapshot.Current))
+                            matchedKeys.Add(idKey);
                     }
 
-                    if (matchedIndices.Count > 0)
+                    if (matchedKeys.Count > 0)
                     {
-                        int docsToUpdate = multi ? matchedIndices.Count : 1;
+                        int docsToUpdate = multi ? matchedKeys.Count : 1;
                         for (int j = 0; j < docsToUpdate; j++)
                         {
-                            int idx = matchedIndices[j];
-                            var oldDoc = collDocs[idx];
-                            var oldId = oldDoc["_id"];
+                            var idKey = matchedKeys[j];
+                            var snapshot = _snapshots[idKey];
+                            var oldDoc = snapshot.Current;
 
                             BsonDocument newDoc;
                             if (isOperatorUpdate)
@@ -305,13 +330,13 @@ public sealed class BsonFileBackend : IMongoBackend
                             else
                             {
                                 newDoc = new BsonDocument(replacement);
-                                newDoc["_id"] = oldId;
+                                newDoc["_id"] = oldDoc["_id"];
                             }
 
                             if (newDoc.ToJson() != oldDoc.ToJson())
                                 modified++;
 
-                            collDocs[idx] = newDoc;
+                            snapshot.Mutated = newDoc;
                         }
                         matched += docsToUpdate;
                     }
@@ -342,7 +367,8 @@ public sealed class BsonFileBackend : IMongoBackend
                             }
                         }
 
-                        collDocs.Add(newDoc);
+                        var idKey = GetSnapshotKey(newDoc["_id"]);
+                        _snapshots[idKey] = new DocumentSnapshot(newDoc);
                         upserted.Add(new BsonDocument { { "index", i }, { "_id", newDoc["_id"] } });
                         matched++;
                     }
@@ -386,9 +412,7 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
-            if (!_databases.TryGetValue(database, out var db) || !db.TryGetValue(collection, out var collDocs))
-                return new BsonDocument { { "ok", 1.0 }, { "n", 0 } };
-
+            var baselineData = _baseline.GetCollection(database, collection);
             var filterCompiler = new Mongo.Fakes.Core.FilterCompiler();
             int deletedCount = 0;
 
@@ -405,23 +429,39 @@ public sealed class BsonFileBackend : IMongoBackend
                 try
                 {
                     var predicate = filterCompiler.Compile(filter);
-                    var matchedIndices = new List<int>();
-                    for (int idx = 0; idx < collDocs.Count; idx++)
+                    var matchedKeys = new List<string>();
+
+                    foreach (var doc in baselineData)
                     {
-                        if (predicate(collDocs[idx]))
-                            matchedIndices.Add(idx);
+                        var idKey = GetSnapshotKey(doc["_id"]);
+                        if (!_deletedIds.Contains(idKey))
+                        {
+                            var snapshot = GetOrCreateSnapshot(idKey, doc);
+                            if (predicate(snapshot.Current))
+                                matchedKeys.Add(idKey);
+                        }
                     }
 
-                    if (limit == 1 && matchedIndices.Count > 0)
+                    // Also check newly inserted documents
+                    foreach (var kvp in _snapshots)
                     {
-                        collDocs.RemoveAt(matchedIndices[0]);
+                        if (!baselineData.Any(d => GetSnapshotKey(d["_id"]) == kvp.Key) && !_deletedIds.Contains(kvp.Key))
+                        {
+                            if (predicate(kvp.Value.Current))
+                                matchedKeys.Add(kvp.Key);
+                        }
+                    }
+
+                    if (limit == 1 && matchedKeys.Count > 0)
+                    {
+                        _deletedIds.Add(matchedKeys[0]);
                         deletedCount++;
                     }
                     else if (limit == 0)
                     {
-                        for (int idx = matchedIndices.Count - 1; idx >= 0; idx--)
-                            collDocs.RemoveAt(matchedIndices[idx]);
-                        deletedCount += matchedIndices.Count;
+                        foreach (var key in matchedKeys)
+                            _deletedIds.Add(key);
+                        deletedCount += matchedKeys.Count;
                     }
                 }
                 catch (NotSupportedException ex)
@@ -438,7 +478,8 @@ public sealed class BsonFileBackend : IMongoBackend
     {
         lock (_lock)
         {
-            var databases = new BsonArray(_databases.Keys.Select(k => new BsonDocument { { "name", k } }));
+            var databaseNames = _baseline.GetDatabases();
+            var databases = new BsonArray(databaseNames.Select(k => new BsonDocument { { "name", k } }));
             return new BsonDocument
             {
                 { "ok", 1.0 },
@@ -453,7 +494,8 @@ public sealed class BsonFileBackend : IMongoBackend
 
         lock (_lock)
         {
-            if (!_databases.TryGetValue(database, out var db))
+            var collectionNames = _baseline.GetCollections(database);
+            if (collectionNames.Count == 0)
             {
                 return new BsonDocument
                 {
@@ -467,7 +509,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 };
             }
 
-            var allCollections = db.Keys.Select(k => new BsonDocument { { "name", k } }).ToList();
+            var allCollections = collectionNames.Select(k => new BsonDocument { { "name", k } }).ToList();
 
             if (filter.ElementCount > 0)
             {
@@ -495,26 +537,12 @@ public sealed class BsonFileBackend : IMongoBackend
         if (!command.TryGetValue("drop", out var collValue) || !collValue.IsString)
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'drop' field.");
 
-        string collection = collValue.AsString;
-
-        lock (_lock)
-        {
-            if (_databases.TryGetValue(database, out var db))
-            {
-                db.Remove(collection);
-            }
-
-            return new BsonDocument { { "ok", 1.0 } };
-        }
+        return new BsonDocument { { "ok", 1.0 } };
     }
 
     private BsonDocument HandleDropDatabase(string database)
     {
-        lock (_lock)
-        {
-            _databases.Remove(database);
-            return new BsonDocument { { "ok", 1.0 } };
-        }
+        return new BsonDocument { { "ok", 1.0 } };
     }
 
     private BsonDocument HandleDistinct(string database, BsonDocument command)
@@ -598,18 +626,6 @@ public sealed class BsonFileBackend : IMongoBackend
 
                 lock (_lock)
                 {
-                    if (!_databases.TryGetValue(database, out var db))
-                    {
-                        db = new Dictionary<string, List<BsonDocument>>();
-                        _databases[database] = db;
-                    }
-
-                    if (!db.TryGetValue(collection, out var collDocs))
-                    {
-                        collDocs = new List<BsonDocument>();
-                        db[collection] = collDocs;
-                    }
-
                     BsonDocument newDoc;
                     if (isOperatorUpdate)
                     {
@@ -635,7 +651,8 @@ public sealed class BsonFileBackend : IMongoBackend
                         }
                     }
 
-                    collDocs.Add(newDoc);
+                    var idKey = GetSnapshotKey(newDoc["_id"]);
+                    _snapshots[idKey] = new DocumentSnapshot(newDoc);
                     return new BsonDocument
                     {
                         { "ok", 1.0 },
@@ -650,6 +667,7 @@ public sealed class BsonFileBackend : IMongoBackend
         var foundDoc = results[0];
         var returnValue = new BsonDocument(foundDoc);
         BsonDocument? updatedDoc = null;
+        var foundDocKey = GetSnapshotKey(foundDoc["_id"]);
 
         if (isUpdate && command.TryGetValue("update", out var updateValue2))
         {
@@ -658,48 +676,27 @@ public sealed class BsonFileBackend : IMongoBackend
 
             lock (_lock)
             {
-                if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
+                var snapshot = GetOrCreateSnapshot(foundDocKey, foundDoc);
+                BsonDocument newDoc;
+                if (isOperatorUpdate)
                 {
-                    BsonDocument newDoc;
-                    if (isOperatorUpdate)
-                    {
-                        newDoc = UpdateApplier.ApplyOperators(foundDoc, update);
-                    }
-                    else
-                    {
-                        newDoc = new BsonDocument(update);
-                        newDoc["_id"] = foundDoc["_id"];
-                    }
-
-                    updatedDoc = newDoc;
-
-                    var predicate = new FilterCompiler().Compile(filter);
-                    for (int idx = 0; idx < collDocs.Count; idx++)
-                    {
-                        if (collDocs[idx]["_id"].Equals(foundDoc["_id"]))
-                        {
-                            collDocs[idx] = newDoc;
-                            break;
-                        }
-                    }
+                    newDoc = UpdateApplier.ApplyOperators(foundDoc, update);
                 }
+                else
+                {
+                    newDoc = new BsonDocument(update);
+                    newDoc["_id"] = foundDoc["_id"];
+                }
+
+                updatedDoc = newDoc;
+                snapshot.Mutated = newDoc;
             }
         }
         else if (isRemove)
         {
             lock (_lock)
             {
-                if (_databases.TryGetValue(database, out var db) && db.TryGetValue(collection, out var collDocs))
-                {
-                    for (int idx = 0; idx < collDocs.Count; idx++)
-                    {
-                        if (collDocs[idx]["_id"].Equals(foundDoc["_id"]))
-                        {
-                            collDocs.RemoveAt(idx);
-                            break;
-                        }
-                    }
-                }
+                _deletedIds.Add(foundDocKey);
             }
         }
 
@@ -721,153 +718,5 @@ public sealed class BsonFileBackend : IMongoBackend
     private static BsonDocument HandleNoOp(string commandName)
     {
         return new BsonDocument { { "ok", 1.0 } };
-    }
-
-    private static Dictionary<string, Dictionary<string, List<BsonDocument>>> LoadAllFixtures(string rootFolder)
-    {
-        var databases = new Dictionary<string, Dictionary<string, List<BsonDocument>>>();
-
-        if (!Directory.Exists(rootFolder))
-        {
-            return databases;
-        }
-
-        foreach (var dbDir in Directory.EnumerateDirectories(rootFolder))
-        {
-            var collections = new Dictionary<string, List<BsonDocument>>();
-
-            foreach (var file in Directory.EnumerateFiles(dbDir, "*.json"))
-            {
-                var collectionName = Path.GetFileNameWithoutExtension(file);
-                collections[collectionName] = LoadJsonFile(file);
-            }
-
-            if (collections.Count > 0)
-            {
-                databases[Path.GetFileName(dbDir)] = collections;
-            }
-        }
-
-        return databases;
-    }
-
-    private static List<BsonDocument> LoadJsonFile(string path)
-    {
-        var docs = new List<BsonDocument>();
-        var content = File.ReadAllText(path);
-
-        var trimmed = content.TrimStart();
-        if (trimmed.StartsWith("["))
-        {
-            var array = BsonDocument.Parse("{ arr: " + content + " }")["arr"].AsBsonArray;
-            foreach (var element in array)
-            {
-                var doc = element.IsBsonDocument ? (BsonDocument)element : new BsonDocument { { "value", element } };
-                if (!doc.Contains("_id"))
-                    doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
-
-                docs.Add(doc);
-            }
-        }
-        else
-        {
-            foreach (var line in content.Split('\n'))
-            {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-
-                var doc = BsonDocument.Parse(line);
-                if (!doc.Contains("_id"))
-                    doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
-
-                docs.Add(doc);
-            }
-        }
-
-        return docs;
-    }
-
-    private static Dictionary<string, Dictionary<string, List<BsonDocument>>> LoadFromMongoDump(string rootFolder)
-    {
-        var databases = new Dictionary<string, Dictionary<string, List<BsonDocument>>>();
-
-        if (!Directory.Exists(rootFolder))
-            return databases;
-
-        foreach (var dbDir in Directory.EnumerateDirectories(rootFolder))
-        {
-            var dbName = Path.GetFileName(dbDir);
-            var collections = new Dictionary<string, List<BsonDocument>>();
-
-            var collectionNames = new HashSet<string>();
-            foreach (var file in Directory.EnumerateFiles(dbDir))
-            {
-                var fileName = Path.GetFileName(file);
-                if (fileName.EndsWith(".metadata.json"))
-                    continue;
-
-                var ext = Path.GetExtension(file).ToLowerInvariant();
-                var collectionName = Path.GetFileNameWithoutExtension(file);
-
-                if (ext == ".bson" && !collectionNames.Contains(collectionName))
-                {
-                    collections[collectionName] = LoadBsonFile(file);
-                    collectionNames.Add(collectionName);
-                }
-                else if (ext == ".json" && !collectionNames.Contains(collectionName))
-                {
-                    collections[collectionName] = LoadJsonFile(file);
-                    collectionNames.Add(collectionName);
-                }
-            }
-
-            if (collections.Count > 0)
-                databases[dbName] = collections;
-        }
-
-        return databases;
-    }
-
-    private static List<BsonDocument> LoadBsonFile(string path)
-    {
-        var documents = new List<BsonDocument>();
-
-        using (var stream = File.OpenRead(path))
-        {
-            while (stream.Position < stream.Length)
-            {
-                byte[] lengthBytes = new byte[4];
-                if (stream.Read(lengthBytes, 0, 4) != 4)
-                    break;
-
-                int docLength = BitConverter.ToInt32(lengthBytes, 0);
-                if (docLength < 5)
-                    break;
-
-                byte[] docBytes = new byte[docLength];
-                Array.Copy(lengthBytes, docBytes, 4);
-
-                if (stream.Read(docBytes, 4, docLength - 4) != docLength - 4)
-                    break;
-
-                try
-                {
-                    using (var memStream = new System.IO.MemoryStream(docBytes))
-                    using (var reader = new MongoDB.Bson.IO.BsonBinaryReader(memStream))
-                    {
-                        var doc = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<BsonDocument>(reader);
-                        if (!doc.Contains("_id"))
-                            doc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
-                        documents.Add(doc);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidDataException($"Error deserializing BSON document from {path} at offset {stream.Position}", ex);
-                }
-            }
-        }
-
-        return documents;
     }
 }
