@@ -10,7 +10,7 @@
 
   <PropertyGroup>
     <!-- Bumped by release-please based on conventional commits; see .github/workflows/release.yml -->
-    <VersionPrefix>0.7.5</VersionPrefix>
+    <VersionPrefix>0.7.6</VersionPrefix>
     <Authors>Michael Yarichuk</Authors>
     <Company>Michael Yarichuk</Company>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
