@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.5](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.4...Mongo.Fakes-v0.7.5) (2026-08-26)
+
+
+### Bug Fixes
+
+* error on $meta without required query context instead of silently returning null ([e1f8ae1](https://github.com/myarichuk/Mongo.Fakes/commit/e1f8ae1a33d304441ad7b327dd565636bf8c4241))
+
 ## [0.7.4](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.3...Mongo.Fakes-v0.7.4) (2026-08-26)
 
 
