@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.7...Mongo.Fakes-v0.8.0) (2026-08-26)
+
+
+### Features
+
+* support string field-path expressions in $project stages ([923c92c](https://github.com/myarichuk/Mongo.Fakes/commit/923c92c0c076c753c30e659f332720654d5900c1))
+
 ## [0.7.7](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.6...Mongo.Fakes-v0.7.7) (2026-08-26)
 
 
