@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.4](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.3...Mongo.Fakes-v0.7.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* treat $meta projection fields as additive in all projection contexts ([6f237ae](https://github.com/myarichuk/Mongo.Fakes/commit/6f237aeb5e29a137e2127d81f681e0ecc3f436fd))
+
 ## [0.7.3](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.2...Mongo.Fakes-v0.7.3) (2026-08-25)
 
 
