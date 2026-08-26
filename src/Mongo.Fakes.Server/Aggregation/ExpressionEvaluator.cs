@@ -375,13 +375,20 @@ internal sealed class ExpressionEvaluator
         if (args is not BsonString metaArg)
             return BsonNull.Value;
 
-        if (metaArg.Value == "textScore")
+        return metaArg.Value switch
         {
-            if (doc.TryGetValue(Query.TextSearchFilter.ScoreField, out var score) && score.IsDouble)
-                return score;
-            return BsonNull.Value;
-        }
+            "textScore" => EvalMetaTextScore(doc),
+            "searchScore" => throw new NotSupportedException("$meta: \"searchScore\" requires $search queries, which are not yet supported"),
+            "vectorSearchScore" => throw new NotSupportedException("$meta: \"vectorSearchScore\" requires $vectorSearch queries, which are not yet supported"),
+            "indexKey" => BsonNull.Value, // Returns nothing if not available, doesn't error
+            _ => throw new NotSupportedException($"$meta: \"{metaArg.Value}\" is not supported")
+        };
+    }
 
-        return BsonNull.Value;
+    private static BsonValue EvalMetaTextScore(BsonDocument doc)
+    {
+        if (doc.TryGetValue(Query.TextSearchFilter.ScoreField, out var score) && score.IsDouble)
+            return score;
+        throw new InvalidOperationException("$meta: \"textScore\" can only be used with $text queries");
     }
 }

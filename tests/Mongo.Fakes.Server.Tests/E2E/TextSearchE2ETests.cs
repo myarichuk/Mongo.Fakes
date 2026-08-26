@@ -217,4 +217,52 @@ public class TextSearchE2ETests : IAsyncLifetime
             Assert.True(doc.Contains("score"));
         }
     }
+
+    [Fact]
+    public async Task Find_WithMetaTextScoreProjection_WithoutTextSearch_Throws()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search8");
+
+        await coll.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+
+        var docs = new[]
+        {
+            new BsonDocument { { "_id", 1 }, { "title", "hello world" } },
+            new BsonDocument { { "_id", 2 }, { "title", "goodbye" } }
+        };
+        await coll.InsertManyAsync(docs);
+
+        // Trying to project textScore without a $text query should throw
+        var projection = new BsonDocument { { "score", new BsonDocument { { "$meta", "textScore" } } } };
+        var ex = await Assert.ThrowsAsync<MongoDB.Driver.MongoCommandException>(async () =>
+            await coll.Find(Builders<BsonDocument>.Filter.Empty)
+                .Project(projection)
+                .ToListAsync());
+
+        Assert.Contains("$meta: \"textScore\" can only be used with $text queries", ex.Message);
+    }
+
+    [Fact]
+    public async Task Find_WithMetaSearchScoreProjection_Throws()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search9");
+
+        var docs = new[]
+        {
+            new BsonDocument { { "_id", 1 }, { "title", "hello world" } },
+        };
+        await coll.InsertManyAsync(docs);
+
+        // searchScore requires $search queries which aren't supported yet
+        var projection = new BsonDocument { { "score", new BsonDocument { { "$meta", "searchScore" } } } };
+        var ex = await Assert.ThrowsAsync<MongoDB.Driver.MongoCommandException>(async () =>
+            await coll.Find(Builders<BsonDocument>.Filter.Empty)
+                .Project(projection)
+                .ToListAsync());
+
+        Assert.Contains("searchScore", ex.Message);
+    }
 }
