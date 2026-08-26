@@ -17,6 +17,9 @@ internal sealed class Projector
         value.IsBsonDocument && value.AsBsonDocument.ElementCount == 1 &&
         value.AsBsonDocument.GetElement(0).Name == "$meta";
 
+    private static bool IsFieldPathExpression(BsonValue value) =>
+        value.IsString && value.AsString.StartsWith("$");
+
     public Projector(BsonDocument projectionSpec)
     {
         _projectionSpec = projectionSpec;
@@ -30,14 +33,15 @@ internal sealed class Projector
 
             bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
                 element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+            bool isFieldPathExpression = IsFieldPathExpression(element.Value);
 
-            if (!isComputedField && !element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
+            if (!isComputedField && !isFieldPathExpression && !element.Value.IsBoolean && !element.Value.IsNumeric && !element.Value.IsString)
                 throw new NotSupportedException("computed projection fields are not supported");
 
             if (IsMetaField(element.Value))
                 continue;
 
-            bool isInclusion = isComputedField || element.Value.ToBoolean();
+            bool isInclusion = isComputedField || isFieldPathExpression || element.Value.ToBoolean();
             if (inclusionMode == null)
                 inclusionMode = isInclusion;
             else if (inclusionMode != isInclusion)
@@ -60,11 +64,18 @@ internal sealed class Projector
 
                 bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
                     element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+                bool isFieldPathExpression = IsFieldPathExpression(element.Value);
 
                 if (isComputedField)
                 {
                     var computedValue = ExpressionEvaluator.Evaluate(element.Value, doc);
                     BsonPath.SetValueByPath(result, element.Name, computedValue);
+                }
+                else if (isFieldPathExpression)
+                {
+                    var fieldPathValue = ExpressionEvaluator.Evaluate(element.Value, doc);
+                    if (fieldPathValue != null)
+                        BsonPath.SetValueByPath(result, element.Name, fieldPathValue);
                 }
                 else if (element.Value.ToBoolean())
                 {
@@ -88,8 +99,9 @@ internal sealed class Projector
             {
                 bool isComputedField = element.Value.IsBsonDocument && element.Value.AsBsonDocument.ElementCount == 1 &&
                     element.Value.AsBsonDocument.GetElement(0).Name.StartsWith("$");
+                bool isFieldPathExpression = IsFieldPathExpression(element.Value);
 
-                if (isComputedField)
+                if (isComputedField || isFieldPathExpression)
                 {
                     var computedValue = ExpressionEvaluator.Evaluate(element.Value, doc);
                     BsonPath.SetValueByPath(result, element.Name, computedValue);

@@ -193,5 +193,85 @@ public class RegressionTests : IAsyncLifetime
         Assert.False(results[0].Contains("joinedReports"));
     }
 
+    [Fact]
+    public async Task Lookup_With_ArrayElemAt_And_IfNull_On_FieldPath()
+    {
+        // Regression: field-path expressions on arrays (e.g., "$joinedReports.Status")
+        // should return an array of subfield values, enabling $arrayElemAt and $ifNull patterns
+        var responses = _client!.GetDatabase("repro").GetCollection<MongoDB.Bson.BsonDocument>("responses");
+        var reports = _client.GetDatabase("repro").GetCollection<MongoDB.Bson.BsonDocument>("-reports-");
+
+        await reports.InsertManyAsync(new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", 1 }, { "RecordId", 100 }, { "Status", "ok" } },
+            new MongoDB.Bson.BsonDocument { { "_id", 2 }, { "RecordId", 100 }, { "Status", "warn" } },
+        });
+        await responses.InsertManyAsync(new[]
+        {
+            new MongoDB.Bson.BsonDocument { { "_id", "a" }, { "RecordId", 100 } },
+            new MongoDB.Bson.BsonDocument { { "_id", "b" }, { "RecordId", 999 } },
+        });
+
+        var cursor = await responses.Aggregate<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument[]
+        {
+            new("$lookup", new MongoDB.Bson.BsonDocument
+            {
+                { "from", "-reports-" },
+                { "localField", "RecordId" },
+                { "foreignField", "RecordId" },
+                { "as", "joinedReports" },
+            }),
+            new("$set", new MongoDB.Bson.BsonDocument("ReportStatus",
+                new MongoDB.Bson.BsonDocument("$ifNull", new MongoDB.Bson.BsonArray
+                {
+                    new MongoDB.Bson.BsonDocument("$arrayElemAt", new MongoDB.Bson.BsonArray { "$joinedReports.Status", 0 }),
+                    "NotReported",
+                }))),
+            new("$project", new MongoDB.Bson.BsonDocument("joinedReports", 0)),
+        }).ToListAsync();
+
+        var a = cursor.Find(d => d["_id"] == "a");
+        var b = cursor.Find(d => d["_id"] == "b");
+
+        Assert.NotNull(a);
+        Assert.Equal("ok", a["ReportStatus"].AsString);
+
+        Assert.NotNull(b);
+        Assert.Equal("NotReported", b["ReportStatus"].AsString);
+    }
+
+    [Fact]
+    public async Task Project_With_FieldPath_String_Expression_Should_Include_Values()
+    {
+        // Test: string field-path expressions in $project (e.g., { "Status": "$array.subfield" })
+        // should include the projected field-path values
+        var collection = _client!.GetDatabase("testdb").GetCollection<MongoDB.Bson.BsonDocument>("fieldpathproj");
+
+        var doc = new MongoDB.Bson.BsonDocument
+        {
+            { "_id", 1 },
+            { "reports", new MongoDB.Bson.BsonArray
+            {
+                new MongoDB.Bson.BsonDocument { { "Status", "ok" } },
+                new MongoDB.Bson.BsonDocument { { "Status", "warn" } }
+            } }
+        };
+        await collection.InsertOneAsync(doc);
+
+        var cursor = await collection.Aggregate<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument[]
+        {
+            new() { { "$project", new MongoDB.Bson.BsonDocument { { "Statuses", "$reports.Status" } } } },
+        }).ToListAsync();
+
+        Assert.Single(cursor);
+        var result = cursor[0];
+        Assert.True(result.Contains("Statuses"), "Statuses field should be projected");
+        Assert.True(result["Statuses"].IsBsonArray, "Statuses should be an array");
+        var statuses = result["Statuses"].AsBsonArray;
+        Assert.Equal(2, statuses.Count);
+        Assert.Equal("ok", statuses[0].AsString);
+        Assert.Equal("warn", statuses[1].AsString);
+    }
+
 
 }
