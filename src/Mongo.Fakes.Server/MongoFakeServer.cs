@@ -67,7 +67,11 @@ public sealed class MongoFakeServer(IMongoBackend backend, int port = 0, string?
 
     public async ValueTask DisposeAsync()
     {
-        _listener?.Stop();
+        if (_listener != null)
+        {
+            _listener.Stop();
+            _listener = null;
+        }
         _cts?.Cancel();
 
         if (_acceptLoopTask != null)
