@@ -24,19 +24,20 @@ public static class BsonPath
                 }
                 else
                 {
-                    var found = false;
+                    // When accessing a non-numeric field on an array, collect values from all elements
+                    var resultArray = new BsonArray();
                     for (int i = 0; i < array.Count; i++)
                     {
                         if (array[i] is BsonDocument subdoc && subdoc.TryGetValue(part, out var value))
                         {
-                            current = value;
-                            found = true;
-                            break;
+                            resultArray.Add(value);
                         }
                     }
 
-                    if (!found)
+                    if (resultArray.Count == 0)
                         return null;
+
+                    current = resultArray;
                 }
             }
             else if (current is BsonDocument bdoc && bdoc.TryGetValue(part, out var next))

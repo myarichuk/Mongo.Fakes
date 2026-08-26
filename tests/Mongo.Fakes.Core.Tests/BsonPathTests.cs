@@ -57,6 +57,88 @@ public class BsonPathTests
     }
 
     [Fact]
+    public void GetValue_WithFieldPathOnArrayOfDocuments_ReturnsArrayOfValues()
+    {
+        var doc = new BsonDocument
+        {
+            { "joinedReports", new BsonArray
+            {
+                new BsonDocument { { "Status", "Active" } },
+                new BsonDocument { { "Status", "Inactive" } },
+                new BsonDocument { { "Status", "Pending" } }
+            } }
+        };
+        var value = BsonPath.GetValue(doc, "joinedReports.Status");
+        
+        Assert.NotNull(value);
+        Assert.True(value.IsBsonArray);
+        var array = value.AsBsonArray;
+        Assert.Equal(3, array.Count);
+        Assert.Equal("Active", array[0].AsString);
+        Assert.Equal("Inactive", array[1].AsString);
+        Assert.Equal("Pending", array[2].AsString);
+    }
+
+    [Fact]
+    public void GetValue_WithFieldPathOnArrayWhereSomeDocumentsLackField_ReturnsArrayOfAvailableValues()
+    {
+        var doc = new BsonDocument
+        {
+            { "reports", new BsonArray
+            {
+                new BsonDocument { { "Status", "Active" } },
+                new BsonDocument { { "Name", "No Status" } },
+                new BsonDocument { { "Status", "Pending" } }
+            } }
+        };
+        var value = BsonPath.GetValue(doc, "reports.Status");
+        
+        Assert.NotNull(value);
+        Assert.True(value.IsBsonArray);
+        var array = value.AsBsonArray;
+        Assert.Equal(2, array.Count);
+        Assert.Equal("Active", array[0].AsString);
+        Assert.Equal("Pending", array[1].AsString);
+    }
+
+    [Fact]
+    public void GetValue_WithNestedFieldPathOnArrayOfDocuments_ReturnsNestedArrayOfValues()
+    {
+        var doc = new BsonDocument
+        {
+            { "orders", new BsonArray
+            {
+                new BsonDocument { { "items", new BsonArray { "item1", "item2" } } },
+                new BsonDocument { { "items", new BsonArray { "item3" } } }
+            } }
+        };
+        var value = BsonPath.GetValue(doc, "orders.items");
+        
+        Assert.NotNull(value);
+        Assert.True(value.IsBsonArray);
+        var array = value.AsBsonArray;
+        Assert.Equal(2, array.Count);
+        Assert.True(array[0].IsBsonArray);
+        Assert.True(array[1].IsBsonArray);
+    }
+
+    [Fact]
+    public void GetValue_WithFieldPathOnArrayWhereNoDocumentsHaveField_ReturnsNull()
+    {
+        var doc = new BsonDocument
+        {
+            { "reports", new BsonArray
+            {
+                new BsonDocument { { "Name", "Report 1" } },
+                new BsonDocument { { "Name", "Report 2" } }
+            } }
+        };
+        var value = BsonPath.GetValue(doc, "reports.Status");
+        
+        Assert.Null(value);
+    }
+
+    [Fact]
     public void SetValueByPath_WithSimplePath_SetsValue()
     {
         var doc = new BsonDocument();
