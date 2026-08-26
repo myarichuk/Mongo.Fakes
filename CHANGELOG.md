@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.7](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.6...Mongo.Fakes-v0.7.7) (2026-08-26)
+
+
+### Bug Fixes
+
+* race condition in testing logic ([04903b3](https://github.com/myarichuk/Mongo.Fakes/commit/04903b322be13c2472be4e1a2da35fe12069edc6))
+
 ## [0.7.6](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.5...Mongo.Fakes-v0.7.6) (2026-08-26)
 
 
