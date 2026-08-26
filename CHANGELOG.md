@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.6](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.5...Mongo.Fakes-v0.7.6) (2026-08-26)
+
+
+### Bug Fixes
+
+* field-path expressions on arrays now return array of values instead of null ([8e0f551](https://github.com/myarichuk/Mongo.Fakes/commit/8e0f55149a73b25fcd27e9fa72d0de9ba22dc84f))
+
 ## [0.7.5](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.4...Mongo.Fakes-v0.7.5) (2026-08-26)
 
 
