@@ -185,4 +185,36 @@ public class TextSearchE2ETests : IAsyncLifetime
         Assert.True(doc.Contains("status"));
         Assert.True(doc.Contains("score"));
     }
+
+    [Fact]
+    public async Task Aggregate_WithMetaOnlyProjectStage_IsAdditiveNotRestrictive()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search7");
+
+        await coll.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("$**")));
+
+        await coll.InsertManyAsync(new[]
+        {
+            new BsonDocument("Content", "blue ocean violin"),
+            new BsonDocument("Content", "violin under the moon"),
+        });
+
+        var pipeline = new BsonDocument[]
+        {
+            new("$match", new BsonDocument("$text", new BsonDocument("$search", "violin"))),
+            new("$project", new BsonDocument("score", new BsonDocument("$meta", "textScore"))),
+        };
+
+        var results = await coll.Aggregate<BsonDocument>(pipeline).ToListAsync();
+
+        Assert.Equal(2, results.Count);
+        foreach (var doc in results)
+        {
+            Assert.True(doc.Contains("_id"));
+            Assert.True(doc.Contains("Content"));
+            Assert.True(doc.Contains("score"));
+        }
+    }
 }

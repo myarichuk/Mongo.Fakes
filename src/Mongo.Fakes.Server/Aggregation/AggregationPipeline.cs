@@ -85,7 +85,7 @@ internal sealed class AggregationPipeline
         if (projection.ElementCount == 0)
             return data;
 
-        var projector = new Projector(projection, isAggregateProject: true);
+        var projector = new Projector(projection);
         return data.Select(d => projector.Project(d));
     }
 
