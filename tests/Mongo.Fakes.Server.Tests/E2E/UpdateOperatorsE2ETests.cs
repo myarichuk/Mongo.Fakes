@@ -168,6 +168,31 @@ public class UpdateOperatorsE2ETests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SetOnInsert_AllowsIdModificationDuringInsert()
+    {
+        // When doing an upsert that results in an insert, $setOnInsert should allow setting _id
+        // This matches MongoDB behavior where $setOnInsert is only applied on insert, not update
+        await _collection!.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 999),
+            "{ $setOnInsert: { _id: 999, name: 'created-with-id' } }",
+            new UpdateOptions { IsUpsert = true });
+
+        var inserted = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 999)).FirstAsync();
+        Assert.Equal(999, inserted["_id"].AsInt32);
+        Assert.Equal("created-with-id", inserted["name"].AsString);
+
+        // On a subsequent update, $setOnInsert should NOT be applied, and _id should not be modifiable
+        await _collection.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", 999),
+            "{ $set: { name: 'updated' } }",
+            new UpdateOptions { IsUpsert = true });
+
+        var updated = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 999)).FirstAsync();
+        Assert.Equal(999, updated["_id"].AsInt32);
+        Assert.Equal("updated", updated["name"].AsString);
+    }
+
+    [Fact]
     public async Task Set_ThroughArrayIndex()
     {
         await _collection!.InsertOneAsync(new BsonDocument
