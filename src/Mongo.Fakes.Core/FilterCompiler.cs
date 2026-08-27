@@ -148,9 +148,16 @@ public sealed class FilterCompiler
     {
         if (op == "$not")
         {
+            // MongoDB allows $not with a BsonRegularExpression or a document like { $regex, $options }
+            if (operatorValue.IsBsonRegularExpression)
+            {
+                var regexExpr = new RegexOperatorTranslator().Translate(valueExpr, operatorValue);
+                return Expression.Not(regexExpr);
+            }
+            
             if (operatorValue is not BsonDocument notCondition)
             {
-                throw new ArgumentException("$not requires a document", nameof(operatorValue));
+                throw new ArgumentException("$not requires a document or regex", nameof(operatorValue));
             }
 
             return Expression.Not(CompileOperatorClauses(notCondition, valueExpr, docParam, variables));

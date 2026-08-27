@@ -180,6 +180,27 @@ public class FilterCompilerTests
     }
 
     [Fact]
+    public void Compile_Not_With_BareRegex_NegatesMatch()
+    {
+        var filter = new BsonDocument("name", new BsonDocument("$not", new BsonRegularExpression("^A", "i")));
+        var predicate = _compiler.Compile(filter);
+
+        Assert.False(predicate(BsonDocument.Parse("{ name: 'alice' }")));
+        Assert.True(predicate(BsonDocument.Parse("{ name: 'bob' }")));
+        Assert.True(predicate(BsonDocument.Parse("{ }")));
+    }
+
+    [Fact]
+    public void Compile_Not_With_RegexDocument_NegatesMatch()
+    {
+        var predicate = _compiler.Compile(BsonDocument.Parse("{ name: { $not: { $regex: '^A', $options: 'i' } } }"));
+
+        Assert.False(predicate(BsonDocument.Parse("{ name: 'alice' }")));
+        Assert.True(predicate(BsonDocument.Parse("{ name: 'bob' }")));
+        Assert.True(predicate(BsonDocument.Parse("{ }")));
+    }
+
+    [Fact]
     public void Compile_All_RequiresEveryValuePresent()
     {
         var predicate = _compiler.Compile(BsonDocument.Parse("{ tags: { $all: ['admin', 'user'] } }"));

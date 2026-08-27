@@ -731,14 +731,39 @@ Shared across all test fixtures; immutable after construction.
 ```csharp
 internal class DocumentSnapshot
 {
-    public BsonDocument Original { get; }      // Reference to baseline
-    public BsonDocument? Mutated { get; set; } // Created on first write
+    // Optional instance name for identification and debugging
+    public string? InstanceName { get; }
     
+    // Reference to shared baseline (immutable)
+    public BsonDocument Original { get; }
+    
+    // Per-fixture mutation copy (created on first write)
+    public BsonDocument? Mutated { get; set; }
+    
+    // Returns current version: Mutated if modified, else Original
     public BsonDocument Current => Mutated ?? Original;
+    
+    // Flag: true if this snapshot has been modified in this fixture
+    public bool IsDirty => Mutated != null;
+    
+    public DocumentSnapshot(BsonDocument original, string? instanceName = null)
+    {
+        Original = original;
+        InstanceName = instanceName;
+    }
+    
+    // Diagnostic helper: returns human-readable snapshot state
+    public string GetDebugInfo()
+    {
+        var name = InstanceName ?? "unnamed";
+        var docId = Original.Contains("_id") ? Original["_id"] : "no-id";
+        var state = IsDirty ? "mutated" : "baseline";
+        return $"Snapshot[{name}] (id={docId}, state={state})";
+    }
 }
 ```
 
-Per-document mutation tracking; one instance per modified document per fixture.
+Per-document mutation tracking; one instance per modified document per fixture. Enables fine-grained tracking of which documents have been modified and provides diagnostic output for debugging fixture state.
 
 #### `BsonFileBackend`
 
@@ -968,6 +993,106 @@ Per-Fixture BsonFileBackend Instance
 | Update | Create mutated copy on first write |
 | Delete | Mark document as deleted (filtered from reads) |
 | Aggregate/Filter | Use current version of each document |
+
+#### Snapshot Naming and Tracking
+
+For test suites with many documents, `DocumentSnapshot` supports instance naming to identify and track snapshots during debugging and test runs.
+
+**Why Name Snapshots?**
+
+When a test fixture contains hundreds of documents, it's difficult to identify which documents have been mutated and which remain baseline without diagnostic output. Named snapshots enable:
+- Logging fixture state changes
+- Debugging test failures by tracing document mutations
+- Validating that expected documents were modified
+- Performance analysis of mutation patterns
+
+**Naming Patterns:**
+
+| Pattern | Example | Use Case |
+|---------|---------|----------|
+| **Collection + ID** | `users_42` | Default pattern; clear association with source |
+| **Fixture + Collection + Seq** | `test_fixture_users_1` | Multiple fixtures, explicit ordering |
+| **Human-readable** | `admin_user_alice` | Debugging & test reports |
+| **Fixture + Field** | `order_123_status` | Tracking specific field mutations |
+
+**Naming Strategy:**
+
+```csharp
+// Pattern 1: Auto-generated from collection + document ID
+public static string NameByCollectionAndId(string collectionName, BsonValue documentId)
+    => $"{collectionName}_{documentId}";
+
+// Pattern 2: Fixture-scoped with sequence
+public static string NameByFixtureAndSequence(string fixtureName, string collectionName, int sequence)
+    => $"{fixtureName}_{collectionName}_{sequence}";
+
+// Pattern 3: Human-readable description
+public static string NameByDescription(string description)
+    => description.ToLowerInvariant().Replace(" ", "_");
+
+// Usage:
+var userSnapshot = new DocumentSnapshot(
+    userDoc,
+    instanceName: NameByCollectionAndId("users", 42)
+);
+Console.WriteLine(userSnapshot.GetDebugInfo());
+// Output: Snapshot[users_42] (id=42, state=baseline)
+```
+
+**Snapshot Registry:**
+
+For tracking multiple snapshots across a fixture:
+
+```csharp
+public class DocumentSnapshotRegistry
+{
+    private readonly Dictionary<string, DocumentSnapshot> _snapshots = new();
+
+    public void Register(string snapshotName, DocumentSnapshot snapshot) 
+        => _snapshots[snapshotName] = snapshot;
+
+    public DocumentSnapshot Get(string snapshotName) 
+        => _snapshots[snapshotName];
+
+    // Query snapshots by state
+    public IEnumerable<DocumentSnapshot> GetDirty() 
+        => _snapshots.Values.Where(s => s.IsDirty);
+
+    public IEnumerable<DocumentSnapshot> GetBaseline() 
+        => _snapshots.Values.Where(s => !s.IsDirty);
+
+    // Diagnostic output
+    public string GetSummary() 
+        => string.Join("\n", _snapshots.Values.Select(s => s.GetDebugInfo()));
+}
+```
+
+**Example Registry Usage:**
+
+```csharp
+var registry = new DocumentSnapshotRegistry();
+
+// Register snapshots
+registry.Register("user_alice", new DocumentSnapshot(aliceDoc, "user_alice"));
+registry.Register("user_bob", new DocumentSnapshot(bobDoc, "user_bob"));
+registry.Register("product_laptop", new DocumentSnapshot(productDoc, "product_laptop"));
+
+// Modify one
+var alice = registry.Get("user_alice");
+alice.Mutated = new BsonDocument(alice.Original) { { "status", "active" } };
+
+// Get diagnostic summary
+Console.WriteLine(registry.GetSummary());
+/*
+Snapshot[user_alice] (id=1, state=mutated)
+Snapshot[user_bob] (id=2, state=baseline)
+Snapshot[product_laptop] (id=101, state=baseline)
+*/
+
+// Count mutations
+var dirtyCount = registry.GetDirty().Count();  // 1
+var baselineCount = registry.GetBaseline().Count();  // 2
+```
 
 ---
 
@@ -1310,6 +1435,7 @@ is complete — it is a one-time reference, not a runtime or build dependency.
 
 | Version | Date | Author | Change |
 |---------|------|--------|--------|
+| 2.3 | 2026-08-27 | Michael Yarichuk | Added `DocumentSnapshot` instance naming, tracking patterns, and `DocumentSnapshotRegistry` for fixture state diagnostics; comprehensive examples for debugging fixture mutations |
 | 2.2 | 2026-08-25 | Michael Yarichuk | Implemented per-document CoW isolation for efficient multi-fixture support; added `IBaselineDataProvider`, `FileBasedBaselineProvider`, and `DocumentSnapshot` to enable shared baseline with per-fixture mutation tracking |
 | 2.1 | 2026-08-24 | Michael Yarichuk | Merged FilterCompiler + TestFixtures specs under the Mongo.Fakes name; shared filter engine between Core and Server; added `$all` and MongoZen prior-art section |
 | 2.0 | 2026-08-24 | Michael Yarichuk | BsonValue-first, Expression-based FilterCompiler rewrite |

@@ -209,6 +209,109 @@ This enables thousands of concurrent test fixtures to maintain isolation without
 
 For tests that don't mutate data, the footprint is the baseline size alone — perfect for read-heavy test suites.
 
+### How CoW Works: DocumentSnapshot
+
+Internally, Mongo.Fakes wraps each document in a `DocumentSnapshot` that tracks baseline vs. mutated state:
+
+```csharp
+internal sealed class DocumentSnapshot
+{
+    public BsonDocument Original { get; }      // Shared baseline
+    public BsonDocument? Mutated { get; set; } // Test-specific copy
+    
+    public BsonDocument Current => Mutated ?? Original;
+    public bool IsDirty => Mutated != null;
+}
+```
+
+**Lifecycle:**
+1. **Load** — Document is loaded from fixture file into `Original` (shared)
+2. **Read** — Tests read via `Current` (points to `Original`)
+3. **Mutate** — When modified, `Mutated` is populated with a copy
+4. **Track** — Future reads use `Mutated` for this snapshot only; other fixtures still see `Original`
+5. **Cleanup** — When test fixture is torn down, only `Mutated` is discarded; `Original` persists for next test
+
+### Tracking Snapshots with Instance Names
+
+For complex test fixtures with many documents, you can name snapshots to track their state during debugging:
+
+```csharp
+// Create a named snapshot (useful for logging/debugging)
+var userSnapshot = new DocumentSnapshot(userDoc, instanceName: "user_alice");
+
+// Later, you can log the state
+Console.WriteLine(userSnapshot.GetDebugInfo());
+// Output: Snapshot[user_alice] (id=1, state=baseline)
+
+// After mutation
+userSnapshot.Mutated = new BsonDocument(userSnapshot.Original) { { "email", "new@example.com" } };
+Console.WriteLine(userSnapshot.GetDebugInfo());
+// Output: Snapshot[user_alice] (id=1, state=mutated)
+```
+
+**Naming Patterns:**
+
+| Pattern | Example | Use Case |
+|---------|---------|----------|
+| **Collection + ID** | `users_42` | Default for tracking by collection |
+| **Fixture + Collection + Seq** | `test_fixture_users_1` | Multiple fixtures, explicit ordering |
+| **Human-readable** | `admin_user_alice` | Debugging & test reports |
+| **Fixture name + field** | `order_123_status` | Tracking specific field changes |
+
+**Example with a SnapshotRegistry:**
+
+```csharp
+var registry = new DocumentSnapshotRegistry();
+
+// Register and track snapshots
+registry.Register("user_alice", new DocumentSnapshot(userDoc, "user_alice"));
+registry.Register("user_bob", new DocumentSnapshot(bobDoc, "user_bob"));
+registry.Register("product_laptop", new DocumentSnapshot(productDoc, "product_laptop"));
+
+// Modify one
+var alice = registry.Get("user_alice");
+alice.Mutated = new BsonDocument(alice.Original) { { "status", "active" } };
+
+// Get diagnostic summary
+Console.WriteLine(registry.GetSummary());
+/* Output:
+Snapshot[user_alice] (id=1, state=mutated)
+Snapshot[user_bob] (id=2, state=baseline)
+Snapshot[product_laptop] (id=101, state=baseline)
+*/
+
+// Query dirty (modified) snapshots only
+var dirtySnapshots = registry.GetDirty();
+Console.WriteLine($"Modified snapshots: {dirtySnapshots.Count()}");
+// Output: Modified snapshots: 1
+```
+
+**Memory Visualization:**
+
+```
+Before any modifications:
+┌──────────────────────────────┐
+│   Shared Baseline (100 MB)   │ ← All 3 test fixtures reference this
+│   - 50,000 user documents    │
+│   - 5,000 product documents  │
+│   - Memory: 100 MB           │
+└──────────────────────────────┘
+
+After Test A modifies 3 users:
+┌──────────────────────────────┐
+│   Shared Baseline (100 MB)   │ ← Tests B & C still use original
+│   - 50,000 user documents    │
+│   - 5,000 product documents  │
+└──────────────────────────────┘
+        ↓ (Test A mutations)
+    ┌────────────────┐
+    │ Test A Copy    │ ← Only 3 modified users copied
+    │ (50 KB)        │
+    └────────────────┘
+
+Total memory: 100 MB + 50 KB (vs. 300 MB if all cloned)
+```
+
 ## Building
 
 ```
