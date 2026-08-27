@@ -17,22 +17,22 @@ internal sealed class UpdateApplier
             switch (op)
             {
                 case "$set":
-                    ApplySet(result, (BsonDocument)spec);
+                    ApplySet(result, (BsonDocument)spec, allowIdModification: false);
                     break;
                 case "$unset":
-                    ApplyUnset(result, (BsonDocument)spec);
+                    ApplyUnset(result, (BsonDocument)spec, allowIdModification: false);
                     break;
                 case "$inc":
-                    ApplyInc(result, (BsonDocument)spec);
+                    ApplyInc(result, (BsonDocument)spec, allowIdModification: false);
                     break;
                 case "$mul":
-                    ApplyMul(result, (BsonDocument)spec);
+                    ApplyMul(result, (BsonDocument)spec, allowIdModification: false);
                     break;
                 case "$min":
-                    ApplyMinMax(result, (BsonDocument)spec, min: true);
+                    ApplyMinMax(result, (BsonDocument)spec, min: true, allowIdModification: false);
                     break;
                 case "$max":
-                    ApplyMinMax(result, (BsonDocument)spec, min: false);
+                    ApplyMinMax(result, (BsonDocument)spec, min: false, allowIdModification: false);
                     break;
                 case "$push":
                     ApplyPush(result, (BsonDocument)spec);
@@ -57,7 +57,7 @@ internal sealed class UpdateApplier
                     break;
                 case "$setOnInsert":
                     if (isUpsertInsert)
-                        ApplySet(result, (BsonDocument)spec);
+                        ApplySet(result, (BsonDocument)spec, allowIdModification: isUpsertInsert);
                     break;
                 default:
                     throw new NotSupportedException($"Unsupported update operator: {op}");
@@ -67,33 +67,33 @@ internal sealed class UpdateApplier
         return result;
     }
 
-    private static void ApplySet(BsonDocument doc, BsonDocument spec)
+    private static void ApplySet(BsonDocument doc, BsonDocument spec, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
-            if (element.Name == "_id")
+            if (element.Name == "_id" && !allowIdModification)
                 throw new NotSupportedException("Cannot modify _id field");
 
             BsonPath.SetValueByPath(doc, element.Name, element.Value);
         }
     }
 
-    private static void ApplyUnset(BsonDocument doc, BsonDocument spec)
+    private static void ApplyUnset(BsonDocument doc, BsonDocument spec, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
-            if (element.Name == "_id")
+            if (element.Name == "_id" && !allowIdModification)
                 throw new NotSupportedException("Cannot modify _id field");
 
             BsonPath.RemoveValueByPath(doc, element.Name);
         }
     }
 
-    private static void ApplyInc(BsonDocument doc, BsonDocument spec)
+    private static void ApplyInc(BsonDocument doc, BsonDocument spec, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
-            if (element.Name == "_id")
+            if (element.Name == "_id" && !allowIdModification)
                 throw new NotSupportedException("Cannot modify _id field");
 
             var current = BsonPath.GetValue(doc, element.Name);
@@ -116,11 +116,11 @@ internal sealed class UpdateApplier
         }
     }
 
-    private static void ApplyMul(BsonDocument doc, BsonDocument spec)
+    private static void ApplyMul(BsonDocument doc, BsonDocument spec, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
-            if (element.Name == "_id")
+            if (element.Name == "_id" && !allowIdModification)
                 throw new NotSupportedException("Cannot modify _id field");
 
             var current = BsonPath.GetValue(doc, element.Name);
@@ -141,11 +141,11 @@ internal sealed class UpdateApplier
         }
     }
 
-    private static void ApplyMinMax(BsonDocument doc, BsonDocument spec, bool min)
+    private static void ApplyMinMax(BsonDocument doc, BsonDocument spec, bool min, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
-            if (element.Name == "_id")
+            if (element.Name == "_id" && !allowIdModification)
                 throw new NotSupportedException("Cannot modify _id field");
 
             var current = BsonPath.GetValue(doc, element.Name);
