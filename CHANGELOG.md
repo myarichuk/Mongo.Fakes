@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.8.0...Mongo.Fakes-v0.8.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* allow _id modification in $setOnInsert during upsert-inserts ([93ed165](https://github.com/myarichuk/Mongo.Fakes/commit/93ed1652a8adbdf8b78d17ddb37568d7f22551c0))
+* support BsonRegularExpression directly in $not operator ([04b6f04](https://github.com/myarichuk/Mongo.Fakes/commit/04b6f0487814bb3cb569b5a6a8353b5a6b4dd9b2))
+
 ## [0.8.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.7.7...Mongo.Fakes-v0.8.0) (2026-08-26)
 
 
