@@ -288,4 +288,32 @@ public class GridFsE2ETests : IAsyncLifetime
         Assert.Equal(bytes2, downloaded2);
         Assert.Equal(bytes3, downloaded3);
     }
+
+    [Fact]
+    public async Task UploadFromBytesAsync_Should_Handle_Special_Characters_In_Filename()
+    {
+        var db = _client!.GetDatabase("testdb");
+        var bucket = new GridFSBucket(db);
+
+        var sourceBytes = new byte[] { 1, 2, 3, 4, 5 };
+        
+        // Test filenames with special characters: # ! & $ ( ) %
+        var filenames = new[]
+        {
+            "file#with#hash.bin",
+            "file!with!exclamation.bin",
+            "file&with&ampersand.bin",
+            "file$with$dollar.bin",
+            "file(with)parens.bin",
+            "file%with%percent.bin",
+            "file-#!&$()%.bin"
+        };
+
+        foreach (var filename in filenames)
+        {
+            var fileId = await bucket.UploadFromBytesAsync(filename, sourceBytes);
+            var downloaded = await bucket.DownloadAsBytesAsync(fileId);
+            Assert.Equal(sourceBytes, downloaded);
+        }
+    }
 }
