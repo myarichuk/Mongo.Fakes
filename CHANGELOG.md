@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.8.1...Mongo.Fakes-v0.9.0) (2026-08-27)
+
+
+### Features
+
+* make DocumentSnapshot and DocumentSnapshotRegistry public APIs ([089563f](https://github.com/myarichuk/Mongo.Fakes/commit/089563f0a824c2f2c8271b3b326630abf7d622e0))
+
 ## [0.8.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.8.0...Mongo.Fakes-v0.8.1) (2026-08-27)
 
 
