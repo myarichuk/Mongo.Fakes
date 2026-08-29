@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.9.0...Mongo.Fakes-v0.10.0) (2026-08-29)
+
+
+### Features
+
+* add support for tx - nop commands ([5398929](https://github.com/myarichuk/Mongo.Fakes/commit/53989295088d7a75b600116d5e8be152d4da937f))
+
 ## [0.9.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.8.1...Mongo.Fakes-v0.9.0) (2026-08-27)
 
 
