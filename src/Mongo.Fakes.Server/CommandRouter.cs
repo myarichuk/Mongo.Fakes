@@ -9,12 +9,14 @@ internal sealed class CommandRouter
 {
     private readonly IMongoBackend _backend;
     private readonly ScramCredential? _credential;
+    private readonly SessionManager _sessionManager;
     private int _conversationIdCounter;
 
     public CommandRouter(IMongoBackend backend, ScramCredential? credential = null)
     {
         _backend = backend;
         _credential = credential;
+        _sessionManager = new SessionManager();
     }
 
     public async Task<BsonDocument> RouteCommandAsync(string database, BsonDocument command, AuthState authState, CancellationToken ct)
@@ -31,13 +33,17 @@ internal sealed class CommandRouter
             "ping" => HandlePing(),
             "buildinfo" => HandleBuildInfo(),
             "getparameter" => HandleGetParameter(command),
-            "endsessions" => HandleEndSessions(),
+            "endsessions" => HandleEndSessions(command),
             "killcursors" => HandleKillCursors(),
             "getmore" => HandleGetMore(),
             "whatsmyuri" => HandleWhatsMyUri(),
             "connectionstatus" => HandleConnectionStatus(),
             "saslstart" => HandleSaslStart(command, authState),
             "saslcontinue" => HandleSaslContinue(command, authState),
+            "startsession" => HandleStartSession(),
+            "begintransaction" => HandleBeginTransaction(command),
+            "committransaction" => HandleCommitTransaction(command),
+            "aborttransaction" => HandleAbortTransaction(command),
             _ => await ExecuteBackendCommandAsync(database, command, authState, ct).ConfigureAwait(false)
         };
     }
@@ -131,8 +137,19 @@ internal sealed class CommandRouter
         };
     }
 
-    private BsonDocument HandleEndSessions()
+    private BsonDocument HandleEndSessions(BsonDocument command)
     {
+        if (command.TryGetValue("sessions", out var sessionsValue) && sessionsValue.IsBsonArray)
+        {
+            foreach (var sessionDoc in sessionsValue.AsBsonArray.OfType<BsonDocument>())
+            {
+                if (sessionDoc.TryGetValue("id", out var idValue) && idValue.IsBsonBinaryData)
+                {
+                    _sessionManager.EndSession(idValue.AsBsonBinaryData);
+                }
+            }
+        }
+
         return new BsonDocument
         {
             { "ok", 1.0 }
@@ -167,5 +184,50 @@ internal sealed class CommandRouter
         {
             { "ok", 1.0 }
         };
+    }
+
+    private BsonDocument HandleStartSession()
+    {
+        return _sessionManager.StartSession();
+    }
+
+    private BsonDocument HandleBeginTransaction(BsonDocument command)
+    {
+        if (!command.TryGetValue("lsid", out var lsidValue) || !lsidValue.IsBsonDocument)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'lsid' field.");
+
+        var lsidDoc = lsidValue.AsBsonDocument;
+        if (!lsidDoc.TryGetValue("id", out var idValue) || !idValue.IsBsonBinaryData)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing session id in lsid.");
+
+        int? txnNumber = null;
+        if (command.TryGetValue("txnNumber", out var txnValue) && txnValue.IsInt32)
+            txnNumber = txnValue.ToInt32();
+
+        return _sessionManager.BeginTransaction(idValue.AsBsonBinaryData, txnNumber);
+    }
+
+    private BsonDocument HandleCommitTransaction(BsonDocument command)
+    {
+        if (!command.TryGetValue("lsid", out var lsidValue) || !lsidValue.IsBsonDocument)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'lsid' field.");
+
+        var lsidDoc = lsidValue.AsBsonDocument;
+        if (!lsidDoc.TryGetValue("id", out var idValue) || !idValue.IsBsonBinaryData)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing session id in lsid.");
+
+        return _sessionManager.CommitTransaction(idValue.AsBsonBinaryData);
+    }
+
+    private BsonDocument HandleAbortTransaction(BsonDocument command)
+    {
+        if (!command.TryGetValue("lsid", out var lsidValue) || !lsidValue.IsBsonDocument)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'lsid' field.");
+
+        var lsidDoc = lsidValue.AsBsonDocument;
+        if (!lsidDoc.TryGetValue("id", out var idValue) || !idValue.IsBsonBinaryData)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing session id in lsid.");
+
+        return _sessionManager.AbortTransaction(idValue.AsBsonBinaryData);
     }
 }
