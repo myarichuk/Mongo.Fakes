@@ -155,6 +155,7 @@ Server-only, on top of the shared filter engine:
 
 - **Recognized only at top level:** `$text` is recognized only as a top-level filter key, not inside `$and`/`$or` conditions
 - **Single text index per collection:** Only one text index is permitted per collection; attempting to create a second one will error
+- **Only text indexes are tracked:** `createIndexes`/`listIndexes`/`dropIndexes` only recognize text indexes (plus the implicit `_id_` index); regular (ascending/descending/compound) index specs are accepted by `createIndexes` as a no-op and never appear in `listIndexes` or `dropIndexes`
 - **Case-insensitive, whitespace-split terms:** Search tokens are split on whitespace and matched case-insensitively against document text
 - **OR semantics:** Multiple search terms are OR'd (document matches if any term is found)
 - **Scoring:** Text score is computed as the sum of term occurrence counts across indexed fields; exact weighting differs from MongoDB but is monotonic and deterministic

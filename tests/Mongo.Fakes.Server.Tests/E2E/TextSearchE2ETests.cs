@@ -265,4 +265,65 @@ public class TextSearchE2ETests : IAsyncLifetime
 
         Assert.Contains("searchScore", ex.Message);
     }
+
+    [Fact]
+    public async Task DropOne_ByName_RemovesIndexFromListIndexes()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search10");
+
+        await coll.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+
+        var namesBefore = (await coll.Indexes.List().ToListAsync())
+            .Select(i => i["name"].AsString).ToList();
+        Assert.Contains("title_text", namesBefore);
+
+        await coll.Indexes.DropOneAsync("title_text");
+
+        var namesAfter = (await coll.Indexes.List().ToListAsync())
+            .Select(i => i["name"].AsString).ToList();
+        Assert.DoesNotContain("title_text", namesAfter);
+        Assert.Contains("_id_", namesAfter);
+    }
+
+    [Fact]
+    public async Task DropAll_RemovesNonIdIndexes()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search11");
+
+        await coll.Indexes.CreateOneAsync(
+            new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Text("title")));
+
+        await coll.Indexes.DropAllAsync();
+
+        var namesAfter = (await coll.Indexes.List().ToListAsync())
+            .Select(i => i["name"].AsString).ToList();
+        Assert.Equal(new[] { "_id_" }, namesAfter);
+    }
+
+    [Fact]
+    public async Task DropOne_UnknownName_ThrowsIndexNotFound()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search12");
+        await coll.InsertOneAsync(new BsonDocument("title", "hello"));
+
+        var ex = await Assert.ThrowsAsync<MongoDB.Driver.MongoCommandException>(async () =>
+            await coll.Indexes.DropOneAsync("nonexistent_text"));
+
+        Assert.Contains("index not found", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DropOne_IdIndex_Throws()
+    {
+        var db = _client!.GetDatabase("textdb");
+        var coll = db.GetCollection<BsonDocument>("search13");
+        await coll.InsertOneAsync(new BsonDocument("title", "hello"));
+
+        await Assert.ThrowsAsync<MongoDB.Driver.MongoCommandException>(async () =>
+            await coll.Indexes.DropOneAsync("_id_"));
+    }
 }

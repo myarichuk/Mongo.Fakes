@@ -129,6 +129,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 "distinct" => HandleDistinct(database, command),
                 "createindexes" => HandleCreateIndexes(database, command),
                 "listindexes" => HandleListIndexes(database, command),
+                "dropindexes" => HandleDropIndexes(database, command),
                 "create" => HandleNoOp("create"),
                 _ => throw new MongoCommandException(ErrorCodes.CommandNotFound, "CommandNotFound", $"no such cmd: {commandName}")
             };
@@ -143,12 +144,35 @@ public sealed class BsonFileBackend : IMongoBackend
         }
     }
 
+    private string GetCommandCollectionName(BsonDocument command, string commandKey)
+    {
+        // Try case-insensitive lookup for the command key
+        foreach (var element in command)
+        {
+            if (element.Name.Equals(commandKey, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!element.Value.IsString)
+                    throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", $"Missing '{commandKey}' field.");
+                return element.Value.AsString;
+            }
+        }
+        throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", $"Missing '{commandKey}' field.");
+    }
+
+    private BsonValue GetCommandValue(BsonDocument command, string commandKey)
+    {
+        // Try case-insensitive lookup for the command key
+        foreach (var element in command)
+        {
+            if (element.Name.Equals(commandKey, StringComparison.OrdinalIgnoreCase))
+                return element.Value;
+        }
+        throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", $"Missing '{commandKey}' field.");
+    }
+
     private BsonDocument HandleFind(string database, BsonDocument command)
     {
-        if (!command.TryGetValue("find", out var collValue) || !collValue.IsString)
-            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'find' field.");
-
-        string collection = collValue.AsString;
+        string collection = GetCommandCollectionName(command, "find");
         var data = GetCollection(database, collection);
 
         var filter = command.TryGetValue("filter", out var f) ? (BsonDocument)f : new BsonDocument();
@@ -183,10 +207,7 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleCount(string database, BsonDocument command)
     {
-        if (!command.TryGetValue("count", out var collValue) || !collValue.IsString)
-            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'count' field.");
-
-        string collection = collValue.AsString;
+        string collection = GetCommandCollectionName(command, "count");
         var data = GetCollection(database, collection);
 
         var query = command.TryGetValue("query", out var q) ? (BsonDocument)q : new BsonDocument();
@@ -211,8 +232,7 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleAggregate(string database, BsonDocument command)
     {
-        if (!command.TryGetValue("aggregate", out var collValue))
-            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'aggregate' field.");
+        var collValue = GetCommandValue(command, "aggregate");
 
         if (collValue.IsInt32 && collValue.AsInt32 == 1)
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Cannot run aggregation at database level");
@@ -691,7 +711,7 @@ public sealed class BsonFileBackend : IMongoBackend
                 {
                     { "v", 2 },
                     { "key", keyDoc },
-                    { "name", textIndex.Fields.Count > 0 ? $"{string.Join("_", textIndex.Fields)}_text" : "$**_text" },
+                    { "name", GetTextIndexName(textIndex) },
                     { "default_language", "english" },
                     { "textIndexVersion", 3 }
                 });
@@ -708,6 +728,83 @@ public sealed class BsonFileBackend : IMongoBackend
                 { "firstBatch", indexes }
             }}
         };
+    }
+
+    private static string GetTextIndexName(TextIndexSpec textIndex) =>
+        textIndex.Fields.Count > 0 ? $"{string.Join("_", textIndex.Fields)}_text" : "$**_text";
+
+    private BsonDocument HandleDropIndexes(string database, BsonDocument command)
+    {
+        if (!command.TryGetValue("dropIndexes", out var collValue) || !collValue.IsString)
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'dropIndexes' field.");
+
+        if (!command.TryGetValue("index", out var indexValue))
+            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'index' field.");
+
+        string collection = collValue.AsString;
+        var key = (database, collection);
+
+        lock (_lock)
+        {
+            int numIndexesBefore = (_textIndexes.ContainsKey(key) ? 1 : 0) + 1; // +1 for the always-present _id_ index
+
+            if (indexValue.IsString && indexValue.AsString == "*")
+            {
+                _textIndexes.Remove(key);
+                return new BsonDocument
+                {
+                    { "ok", 1.0 },
+                    { "nIndexesWas", numIndexesBefore },
+                    { "msg", "non-_id indexes dropped for collection" }
+                };
+            }
+
+            var namesToDrop = new List<string>();
+            if (indexValue.IsString)
+            {
+                namesToDrop.Add(indexValue.AsString);
+            }
+            else if (indexValue.IsBsonArray)
+            {
+                foreach (var item in (BsonArray)indexValue)
+                {
+                    if (!item.IsString)
+                        throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Index names must be strings.");
+                    namesToDrop.Add(item.AsString);
+                }
+            }
+            else if (indexValue is BsonDocument keyDoc)
+            {
+                var spec = TextIndexSpec.TryCreate(keyDoc);
+                if (spec == null)
+                    throw new MongoCommandException(ErrorCodes.IndexNotFound, "IndexNotFound", "can't find index with key like that");
+                namesToDrop.Add(GetTextIndexName(spec));
+            }
+            else
+            {
+                throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Invalid 'index' field.");
+            }
+
+            _textIndexes.TryGetValue(key, out var existingIndex);
+            string? existingName = existingIndex == null ? null : GetTextIndexName(existingIndex);
+
+            foreach (var name in namesToDrop)
+            {
+                if (name == "_id_")
+                    throw new MongoCommandException(ErrorCodes.InvalidOptions, "InvalidOptions", "cannot drop _id index");
+
+                if (name != existingName)
+                    throw new MongoCommandException(ErrorCodes.IndexNotFound, "IndexNotFound", $"index not found with name [{name}]");
+            }
+
+            _textIndexes.Remove(key);
+
+            return new BsonDocument
+            {
+                { "ok", 1.0 },
+                { "nIndexesWas", numIndexesBefore }
+            };
+        }
     }
 
     private BsonDocument HandleCreateIndexes(string database, BsonDocument command)
@@ -770,10 +867,7 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleFindAndModify(string database, BsonDocument command)
     {
-        if (!command.TryGetValue("findandmodify", out var collValue) || !collValue.IsString)
-            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'findandmodify' field.");
-
-        string collection = collValue.AsString;
+        string collection = GetCommandCollectionName(command, "findandmodify");
         var filter = command.TryGetValue("query", out var qValue) ? (BsonDocument)qValue : new BsonDocument();
         var sort = command.TryGetValue("sort", out var sValue) ? (BsonDocument)sValue : null;
         bool returnNew = command.TryGetValue("new", out var newValue) ? newValue.ToBoolean() : false;
