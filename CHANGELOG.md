@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.0...Mongo.Fakes-v0.11.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* make findandmodify operation atomic for single document ([02fcd71](https://github.com/myarichuk/Mongo.Fakes/commit/02fcd7116365184e735b99d0e218dcdc06c950e3))
+
 ## [0.11.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.10.0...Mongo.Fakes-v0.11.0) (2026-09-04)
 
 
