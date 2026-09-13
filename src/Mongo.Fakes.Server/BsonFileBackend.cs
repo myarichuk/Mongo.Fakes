@@ -881,24 +881,20 @@ public sealed class BsonFileBackend : IMongoBackend
 
         var data = GetCollection(database, collection);
 
-        TextIndexSpec? textIndex;
         lock (_lock)
         {
-            _textIndexes.TryGetValue((database, collection), out textIndex);
-        }
+            _textIndexes.TryGetValue((database, collection), out var textIndex);
 
-        var executor = new BsonQueryExecutor();
-        var results = executor.ExecuteFind(data, filter, null, sort, 0, 1, textIndex).ToList();
+            var executor = new BsonQueryExecutor();
+            var results = executor.ExecuteFind(data, filter, null, sort, 0, 1, textIndex).ToList();
 
-        if (results.Count == 0)
-        {
-            if (isUpdate && upsert && command.TryGetValue("update", out var updateValue))
+            if (results.Count == 0)
             {
-                var update = (BsonDocument)updateValue;
-                bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
-
-                lock (_lock)
+                if (isUpdate && upsert && command.TryGetValue("update", out var updateValue))
                 {
+                    var update = (BsonDocument)updateValue;
+                    bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
                     var collKey = (database, collection);
                     var snapshotMap = GetOrCreateSnapshotMap(collKey);
 
@@ -935,23 +931,20 @@ public sealed class BsonFileBackend : IMongoBackend
                         { "value", returnNew ? newDoc : BsonNull.Value }
                     };
                 }
+
+                return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
             }
 
-            return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
-        }
+            var foundDoc = results[0];
+            var returnValue = new BsonDocument(foundDoc);
+            BsonDocument? updatedDoc = null;
+            var foundDocKey = GetSnapshotKey(foundDoc["_id"]);
 
-        var foundDoc = results[0];
-        var returnValue = new BsonDocument(foundDoc);
-        BsonDocument? updatedDoc = null;
-        var foundDocKey = GetSnapshotKey(foundDoc["_id"]);
-
-        if (isUpdate && command.TryGetValue("update", out var updateValue2))
-        {
-            var update = (BsonDocument)updateValue2;
-            bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
-
-            lock (_lock)
+            if (isUpdate && command.TryGetValue("update", out var updateValue2))
             {
+                var update = (BsonDocument)updateValue2;
+                bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
                 var collKey = (database, collection);
                 var snapshot = GetOrCreateSnapshot(collKey, foundDocKey, foundDoc);
                 BsonDocument newDoc;
@@ -968,30 +961,27 @@ public sealed class BsonFileBackend : IMongoBackend
                 updatedDoc = newDoc;
                 snapshot.Mutated = newDoc;
             }
-        }
-        else if (isRemove)
-        {
-            lock (_lock)
+            else if (isRemove)
             {
                 var collKey = (database, collection);
                 var deletedIds = GetOrCreateDeletedIds(collKey);
                 deletedIds.Add(foundDocKey);
             }
+
+            BsonValue valueToReturn;
+            if (isUpdate && returnNew && updatedDoc != null)
+                valueToReturn = updatedDoc;
+            else if (isRemove)
+                valueToReturn = returnValue;
+            else
+                valueToReturn = returnValue;
+
+            return new BsonDocument
+            {
+                { "ok", 1.0 },
+                { "value", valueToReturn }
+            };
         }
-
-        BsonValue valueToReturn;
-        if (isUpdate && returnNew && updatedDoc != null)
-            valueToReturn = updatedDoc;
-        else if (isRemove)
-            valueToReturn = returnValue;
-        else
-            valueToReturn = returnValue;
-
-        return new BsonDocument
-        {
-            { "ok", 1.0 },
-            { "value", valueToReturn }
-        };
     }
 
     private static BsonDocument HandleNoOp(string commandName)
