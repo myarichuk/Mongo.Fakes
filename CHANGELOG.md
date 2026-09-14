@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.1...Mongo.Fakes-v0.11.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* proper lock on findandmodify ([221586a](https://github.com/myarichuk/Mongo.Fakes/commit/221586a0a68f0e1055db0bee788f370dccffb406))
+
 ## [0.11.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.0...Mongo.Fakes-v0.11.1) (2026-09-13)
 
 
