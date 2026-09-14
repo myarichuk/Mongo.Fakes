@@ -867,38 +867,38 @@ public sealed class BsonFileBackend : IMongoBackend
 
     private BsonDocument HandleFindAndModify(string database, BsonDocument command)
     {
-        string collection = GetCommandCollectionName(command, "findandmodify");
-        var filter = command.TryGetValue("query", out var qValue) ? (BsonDocument)qValue : new BsonDocument();
-        var sort = command.TryGetValue("sort", out var sValue) ? (BsonDocument)sValue : null;
-        bool returnNew = command.TryGetValue("new", out var newValue) ? newValue.ToBoolean() : false;
-        bool upsert = command.TryGetValue("upsert", out var upValue) ? upValue.ToBoolean() : false;
-
-        bool isUpdate = command.Contains("update");
-        bool isRemove = command.TryGetValue("remove", out var removeValue) && removeValue.ToBoolean();
-
-        if (isRemove && (isUpdate || upsert))
-            throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Cannot specify both remove and update/upsert in findAndModify");
-
-        var data = GetCollection(database, collection);
-
-        TextIndexSpec? textIndex;
         lock (_lock)
         {
+            string collection = GetCommandCollectionName(command, "findandmodify");
+            var filter = command.TryGetValue("query", out var qValue) ? (BsonDocument)qValue : new BsonDocument();
+            var sort = command.TryGetValue("sort", out var sValue) ? (BsonDocument)sValue : null;
+            bool returnNew = command.TryGetValue("new", out var newValue) ? newValue.ToBoolean() : false;
+            bool upsert = command.TryGetValue("upsert", out var upValue) ? upValue.ToBoolean() : false;
+
+            bool isUpdate = command.Contains("update");
+            bool isRemove = command.TryGetValue("remove", out var removeValue) && removeValue.ToBoolean();
+
+            if (isRemove && (isUpdate || upsert))
+                throw new MongoCommandException(ErrorCodes.BadValue, "BadValue",
+                    "Cannot specify both remove and update/upsert in findAndModify");
+
+            var data = GetCollection(database, collection);
+
+            TextIndexSpec? textIndex = null;
+
+            // maybe we don't have a link
             _textIndexes.TryGetValue((database, collection), out textIndex);
-        }
 
-        var executor = new BsonQueryExecutor();
-        var results = executor.ExecuteFind(data, filter, null, sort, 0, 1, textIndex).ToList();
+            var executor = new BsonQueryExecutor();
+            var results = executor.ExecuteFind(data, filter, null, sort, 0, 1, textIndex).ToList();
 
-        if (results.Count == 0)
-        {
-            if (isUpdate && upsert && command.TryGetValue("update", out var updateValue))
+            if (results.Count == 0)
             {
-                var update = (BsonDocument)updateValue;
-                bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
-
-                lock (_lock)
+                if (isUpdate && upsert && command.TryGetValue("update", out var updateValue))
                 {
+                    var update = (BsonDocument)updateValue;
+                    bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
                     var collKey = (database, collection);
                     var snapshotMap = GetOrCreateSnapshotMap(collKey);
 
@@ -913,6 +913,7 @@ public sealed class BsonFileBackend : IMongoBackend
                             else
                                 newDoc["_id"] = MongoDB.Bson.ObjectId.GenerateNewId();
                         }
+
                         newDoc = UpdateApplier.ApplyOperators(newDoc, update, isUpsertInsert: true);
                     }
                     else
@@ -935,23 +936,20 @@ public sealed class BsonFileBackend : IMongoBackend
                         { "value", returnNew ? newDoc : BsonNull.Value }
                     };
                 }
+
+                return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
             }
 
-            return new BsonDocument { { "ok", 1.0 }, { "value", BsonNull.Value } };
-        }
+            var foundDoc = results[0];
+            var returnValue = new BsonDocument(foundDoc);
+            BsonDocument? updatedDoc = null;
+            var foundDocKey = GetSnapshotKey(foundDoc["_id"]);
 
-        var foundDoc = results[0];
-        var returnValue = new BsonDocument(foundDoc);
-        BsonDocument? updatedDoc = null;
-        var foundDocKey = GetSnapshotKey(foundDoc["_id"]);
-
-        if (isUpdate && command.TryGetValue("update", out var updateValue2))
-        {
-            var update = (BsonDocument)updateValue2;
-            bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
-
-            lock (_lock)
+            if (isUpdate && command.TryGetValue("update", out var updateValue2))
             {
+                var update = (BsonDocument)updateValue2;
+                bool isOperatorUpdate = update.ElementCount > 0 && update.GetElement(0).Name.StartsWith("$");
+
                 var collKey = (database, collection);
                 var snapshot = GetOrCreateSnapshot(collKey, foundDocKey, foundDoc);
                 BsonDocument newDoc;
@@ -968,30 +966,27 @@ public sealed class BsonFileBackend : IMongoBackend
                 updatedDoc = newDoc;
                 snapshot.Mutated = newDoc;
             }
-        }
-        else if (isRemove)
-        {
-            lock (_lock)
+            else if (isRemove)
             {
                 var collKey = (database, collection);
                 var deletedIds = GetOrCreateDeletedIds(collKey);
                 deletedIds.Add(foundDocKey);
             }
+
+            BsonValue valueToReturn;
+            if (isUpdate && returnNew && updatedDoc != null)
+                valueToReturn = updatedDoc;
+            else if (isRemove)
+                valueToReturn = returnValue;
+            else
+                valueToReturn = returnValue;
+
+            return new BsonDocument
+            {
+                { "ok", 1.0 },
+                { "value", valueToReturn }
+            };
         }
-
-        BsonValue valueToReturn;
-        if (isUpdate && returnNew && updatedDoc != null)
-            valueToReturn = updatedDoc;
-        else if (isRemove)
-            valueToReturn = returnValue;
-        else
-            valueToReturn = returnValue;
-
-        return new BsonDocument
-        {
-            { "ok", 1.0 },
-            { "value", valueToReturn }
-        };
     }
 
     private static BsonDocument HandleNoOp(string commandName)
