@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.0...Mongo.Fakes-v0.11.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* make findandmodify operation atomic for single document ([02fcd71](https://github.com/myarichuk/Mongo.Fakes/commit/02fcd7116365184e735b99d0e218dcdc06c950e3))
+
+## [0.11.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.10.0...Mongo.Fakes-v0.11.0) (2026-09-04)
+
+
+### Features
+
+* implement drop indexes command that was missing ([e4e3a62](https://github.com/myarichuk/Mongo.Fakes/commit/e4e3a62f578faede284ca935a791b28500047db5))
+
 ## [0.10.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.9.0...Mongo.Fakes-v0.10.0) (2026-08-29)
 
 

@@ -183,6 +183,35 @@ public class ArrayElemAtAndFindAndModifyE2ETests : IAsyncLifetime
         Assert.Equal(BsonType.Null, result["value"].BsonType);
     }
 
+    [Fact]
+    public async Task FindAndModify_IsAtomic_NoRaceCondition()
+    {
+        await _collection!.InsertOneAsync(new BsonDocument { { "_id", 40 }, { "counter", 0 } });
+
+        const int threadCount = 10;
+        var tasks = new Task[threadCount];
+
+        for (int i = 0; i < threadCount; i++)
+        {
+            tasks[i] = Task.Run(async () =>
+            {
+                var cmd = new BsonDocument
+                {
+                    { "findandmodify", "test" },
+                    { "query", new BsonDocument { { "_id", 40 } } },
+                    { "update", new BsonDocument { { "$inc", new BsonDocument { { "counter", 1 } } } } }
+                };
+
+                await _database!.RunCommandAsync<BsonDocument>(cmd);
+            });
+        }
+
+        await Task.WhenAll(tasks);
+
+        var finalDoc = await _collection.Find(Builders<BsonDocument>.Filter.Eq("_id", 40)).FirstAsync();
+        Assert.Equal(threadCount, finalDoc["counter"].AsInt32);
+    }
+
     // listCollections filter tests
     [Fact]
     public async Task ListCollections_WithFilter_ReturnsFiltered()
