@@ -12,6 +12,7 @@ public sealed class BsonFileBackend : IMongoBackend
     private readonly Dictionary<(string Database, string Collection), Dictionary<string, DocumentSnapshot>> _snapshots;
     private readonly Dictionary<(string Database, string Collection), HashSet<string>> _deletedIds;
     private readonly Dictionary<(string Database, string Collection), TextIndexSpec> _textIndexes;
+    private readonly Dictionary<(string Database, string Collection), Dictionary<string, IndexSpec>> _indexes;
     private readonly object _lock = new();
 
     public BsonFileBackend(IBaselineDataProvider baseline)
@@ -20,6 +21,7 @@ public sealed class BsonFileBackend : IMongoBackend
         _snapshots = new();
         _deletedIds = new();
         _textIndexes = new();
+        _indexes = new();
     }
 
     public BsonFileBackend(string fixtureRootFolder)
@@ -102,6 +104,16 @@ public sealed class BsonFileBackend : IMongoBackend
             snapshotMap[idKey] = snapshot;
         }
         return snapshot;
+    }
+
+    private Dictionary<string, IndexSpec> GetOrCreateIndexes((string Database, string Collection) collKey)
+    {
+        if (!_indexes.TryGetValue(collKey, out var indexes))
+        {
+            indexes = new();
+            _indexes[collKey] = indexes;
+        }
+        return indexes;
     }
 
     public async Task<BsonDocument> ExecuteCommandAsync(string database, BsonDocument command, CancellationToken ct)
@@ -286,6 +298,7 @@ public sealed class BsonFileBackend : IMongoBackend
         {
             var collKey = (database, collection);
             var snapshotMap = GetOrCreateSnapshotMap(collKey);
+            var baselineData = _baseline.GetCollection(database, collection);
             var writeErrors = new List<BsonDocument>();
             int insertedCount = 0;
 
@@ -310,12 +323,27 @@ public sealed class BsonFileBackend : IMongoBackend
 
                     if (ordered)
                         break;
+                    continue;
                 }
-                else
+
+                // Check unique index constraints
+                var uniqueIndexError = CheckUniqueIndexConstraints(doc, collKey, baselineData, snapshotMap);
+                if (uniqueIndexError != null)
                 {
-                    snapshotMap[idKey] = new DocumentSnapshot(doc);
-                    insertedCount++;
+                    writeErrors.Add(new BsonDocument
+                    {
+                        { "index", i },
+                        { "code", uniqueIndexError["code"] },
+                        { "errmsg", uniqueIndexError["errmsg"] }
+                    });
+
+                    if (ordered)
+                        break;
+                    continue;
                 }
+
+                snapshotMap[idKey] = new DocumentSnapshot(doc);
+                insertedCount++;
             }
 
             var result = new BsonDocument { { "ok", 1.0 }, { "n", insertedCount } };
@@ -324,6 +352,96 @@ public sealed class BsonFileBackend : IMongoBackend
 
             return result;
         }
+    }
+
+    /// <summary>
+    /// Check if inserting this document violates any unique index constraints.
+    /// Returns error document if violation found, null otherwise.
+    /// </summary>
+    private BsonDocument? CheckUniqueIndexConstraints(
+        BsonDocument doc,
+        (string Database, string Collection) collKey,
+        IReadOnlyList<BsonDocument> baselineData,
+        Dictionary<string, DocumentSnapshot> snapshotMap)
+    {
+        if (!_indexes.TryGetValue(collKey, out var indexes))
+            return null;
+
+        foreach (var indexSpec in indexes.Values)
+        {
+            if (!indexSpec.Unique)
+                continue;
+
+            // Get the values for this index from the document
+            var indexValues = ExtractIndexValues(doc, indexSpec.KeyDocument);
+
+            // Check against existing documents in baseline
+            foreach (var baselineDoc in baselineData)
+            {
+                var baselineValues = ExtractIndexValues(baselineDoc, indexSpec.KeyDocument);
+                if (ValuesEqual(indexValues, baselineValues))
+                {
+                    return new BsonDocument
+                    {
+                        { "code", ErrorCodes.DuplicateKey },
+                        { "errmsg", $"E11000 duplicate key error collection: {collKey.Collection} index: {indexSpec.Name}" }
+                    };
+                }
+            }
+
+            // Check against newly inserted documents
+            foreach (var snapshot in snapshotMap.Values)
+            {
+                var existingValues = ExtractIndexValues(snapshot.Current, indexSpec.KeyDocument);
+                if (ValuesEqual(indexValues, existingValues))
+                {
+                    return new BsonDocument
+                    {
+                        { "code", ErrorCodes.DuplicateKey },
+                        { "errmsg", $"E11000 duplicate key error collection: {collKey.Collection} index: {indexSpec.Name}" }
+                    };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extract index field values from a document.
+    /// </summary>
+    private static List<BsonValue> ExtractIndexValues(BsonDocument doc, BsonDocument keyDoc)
+    {
+        var values = new List<BsonValue>();
+        foreach (var elem in keyDoc)
+        {
+            if (doc.TryGetValue(elem.Name, out var value))
+            {
+                values.Add(value);
+            }
+            else
+            {
+                values.Add(BsonNull.Value);
+            }
+        }
+        return values;
+    }
+
+    /// <summary>
+    /// Check if two lists of index values are equal (for unique constraint checking).
+    /// </summary>
+    private static bool ValuesEqual(List<BsonValue> values1, List<BsonValue> values2)
+    {
+        if (values1.Count != values2.Count)
+            return false;
+
+        for (int i = 0; i < values1.Count; i++)
+        {
+            if (!values1[i].Equals(values2[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private BsonDocument HandleUpdate(string database, BsonDocument command)
@@ -689,32 +807,15 @@ public sealed class BsonFileBackend : IMongoBackend
             { "name", "_id_" }
         });
 
-        // Include text index if one exists for this collection
+        // Include all stored indexes for this collection
         lock (_lock)
         {
-            if (_textIndexes.TryGetValue((database, collection), out var textIndex))
+            if (_indexes.TryGetValue((database, collection), out var collIndexes))
             {
-                var keyDoc = new BsonDocument();
-                if (textIndex.IsWildcard)
+                foreach (var indexSpec in collIndexes.Values)
                 {
-                    keyDoc["$**"] = "text";
+                    indexes.Add(indexSpec.ToListIndexesBsonDocument());
                 }
-                else
-                {
-                    foreach (var field in textIndex.Fields)
-                    {
-                        keyDoc[field] = "text";
-                    }
-                }
-
-                indexes.Add(new BsonDocument
-                {
-                    { "v", 2 },
-                    { "key", keyDoc },
-                    { "name", GetTextIndexName(textIndex) },
-                    { "default_language", "english" },
-                    { "textIndexVersion", 3 }
-                });
             }
         }
 
@@ -730,8 +831,6 @@ public sealed class BsonFileBackend : IMongoBackend
         };
     }
 
-    private static string GetTextIndexName(TextIndexSpec textIndex) =>
-        textIndex.Fields.Count > 0 ? $"{string.Join("_", textIndex.Fields)}_text" : "$**_text";
 
     private BsonDocument HandleDropIndexes(string database, BsonDocument command)
     {
@@ -742,15 +841,18 @@ public sealed class BsonFileBackend : IMongoBackend
             throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Missing 'index' field.");
 
         string collection = collValue.AsString;
-        var key = (database, collection);
+        var collKey = (database, collection);
 
         lock (_lock)
         {
-            int numIndexesBefore = (_textIndexes.ContainsKey(key) ? 1 : 0) + 1; // +1 for the always-present _id_ index
+            var indexes = GetOrCreateIndexes(collKey);
+            int numIndexesBefore = indexes.Count + 1; // +1 for _id
 
             if (indexValue.IsString && indexValue.AsString == "*")
             {
-                _textIndexes.Remove(key);
+                // Drop all non-_id indexes
+                indexes.Clear();
+                _textIndexes.Remove(collKey);
                 return new BsonDocument
                 {
                     { "ok", 1.0 },
@@ -775,29 +877,40 @@ public sealed class BsonFileBackend : IMongoBackend
             }
             else if (indexValue is BsonDocument keyDoc)
             {
-                var spec = TextIndexSpec.TryCreate(keyDoc);
+                // Drop by key document - find matching index
+                var spec = IndexSpec.TryCreate(new BsonDocument { { "key", keyDoc } });
                 if (spec == null)
                     throw new MongoCommandException(ErrorCodes.IndexNotFound, "IndexNotFound", "can't find index with key like that");
-                namesToDrop.Add(GetTextIndexName(spec));
+
+                // Find index with matching key
+                var matchingIndex = indexes.Values.FirstOrDefault(i =>
+                    i.KeyDocument.ToJson() == keyDoc.ToJson()
+                );
+                if (matchingIndex == null)
+                    throw new MongoCommandException(ErrorCodes.IndexNotFound, "IndexNotFound", "can't find index with key like that");
+
+                namesToDrop.Add(matchingIndex.Name);
             }
             else
             {
                 throw new MongoCommandException(ErrorCodes.BadValue, "BadValue", "Invalid 'index' field.");
             }
 
-            _textIndexes.TryGetValue(key, out var existingIndex);
-            string? existingName = existingIndex == null ? null : GetTextIndexName(existingIndex);
-
+            // Validate all names and drop them
             foreach (var name in namesToDrop)
             {
                 if (name == "_id_")
                     throw new MongoCommandException(ErrorCodes.InvalidOptions, "InvalidOptions", "cannot drop _id index");
 
-                if (name != existingName)
+                if (!indexes.ContainsKey(name))
                     throw new MongoCommandException(ErrorCodes.IndexNotFound, "IndexNotFound", $"index not found with name [{name}]");
-            }
 
-            _textIndexes.Remove(key);
+                // Check if it's a text index and maintain backward compat
+                if (indexes[name].Type == IndexType.Text)
+                    _textIndexes.Remove(collKey);
+
+                indexes.Remove(name);
+            }
 
             return new BsonDocument
             {
@@ -817,10 +930,12 @@ public sealed class BsonFileBackend : IMongoBackend
 
         string collection = collValue.AsString;
         var indexesArray = (BsonArray)indexesValue;
+        var collKey = (database, collection);
 
         lock (_lock)
         {
-            int numIndexesBefore = _textIndexes.ContainsKey((database, collection)) ? 1 : 0;
+            var indexes = GetOrCreateIndexes(collKey);
+            int numIndexesBefore = indexes.Count + 1; // +1 for _id
             int numIndexesAfter = numIndexesBefore;
 
             foreach (var indexElem in indexesArray)
@@ -828,32 +943,54 @@ public sealed class BsonFileBackend : IMongoBackend
                 if (indexElem is not BsonDocument indexDoc)
                     continue;
 
-                if (!indexDoc.TryGetValue("key", out var keyValue) || keyValue is not BsonDocument keyDoc)
+                var indexSpec = IndexSpec.TryCreate(indexDoc);
+                if (indexSpec == null)
                     continue;
 
-                var textIndex = TextIndexSpec.TryCreate(keyDoc);
-                if (textIndex != null)
+                // Check for existing index with same name
+                if (indexes.TryGetValue(indexSpec.Name, out var existing))
                 {
-                    var key = (database, collection);
-                    if (_textIndexes.TryGetValue(key, out var existing))
+                    // Check if it's identical (idempotent)
+                    if (existing.KeyDocument.ToJson() == indexSpec.KeyDocument.ToJson() &&
+                        existing.Unique == indexSpec.Unique &&
+                        existing.Sparse == indexSpec.Sparse &&
+                        existing.ExpireAfterSeconds == indexSpec.ExpireAfterSeconds)
                     {
-                        // Check if it's identical (idempotent)
-                        if (existing.IsWildcard == textIndex.IsWildcard &&
-                            existing.Fields.SequenceEqual(textIndex.Fields))
-                        {
-                            continue; // Already exists, no error
-                        }
+                        continue; // Already exists, no error
+                    }
 
-                        // Genuine conflict: two different text indexes
+                    // Genuine conflict: two different indexes with same name
+                    throw new MongoCommandException(
+                        ErrorCodes.BadValue,
+                        "BadValue",
+                        $"index already exists with different options [{indexSpec.Name}]");
+                }
+
+                // Check for text index conflict (only one text index per collection)
+                if (indexSpec.Type == IndexType.Text)
+                {
+                    var existingTextIndex = indexes.Values.FirstOrDefault(i => i.Type == IndexType.Text);
+                    if (existingTextIndex != null && existingTextIndex.Name != indexSpec.Name)
+                    {
                         throw new MongoCommandException(
                             ErrorCodes.BadValue,
                             "BadValue",
                             "Only one text index is allowed per collection.");
                     }
-
-                    _textIndexes[key] = textIndex;
-                    numIndexesAfter++;
                 }
+
+                // Store the index
+                indexes[indexSpec.Name] = indexSpec;
+
+                // Also maintain _textIndexes for backward compatibility
+                if (indexSpec.Type == IndexType.Text)
+                {
+                    var textIndexSpec = TextIndexSpec.TryCreate(indexSpec.KeyDocument);
+                    if (textIndexSpec != null)
+                        _textIndexes[collKey] = textIndexSpec;
+                }
+
+                numIndexesAfter++;
             }
 
             return new BsonDocument
