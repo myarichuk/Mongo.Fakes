@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.2...Mongo.Fakes-v0.12.0) (2026-09-20)
+
+
+### Features
+
+* add and improve index support ([1197d30](https://github.com/myarichuk/Mongo.Fakes/commit/1197d30c17c63d58ab12cda3acfc6dd3f0ce9115))
+
 ## [0.11.2](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.1...Mongo.Fakes-v0.11.2) (2026-09-14)
 
 
