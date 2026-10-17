@@ -120,6 +120,15 @@ Server-only, on top of the shared filter engine:
 | Sorting, `$skip`, `$limit` | Result ordering/slicing |
 | `$match`, `$project`, `$sort`, `$skip`, `$limit`, `$group`, `$unwind`, `$setWindowFields` | Aggregation pipeline stages; `$text` search supported at top level of filter |
 | GridFS (`MongoDB.Driver.GridFSBucket`) | Supported transparently via existing `insert`, `find`, `update`, `delete`, and `createIndexes` commands; `listIndexes` returns empty index list. No bucket-specific server code required. |
+| Server-side cursors | `batchSize` (first batch defaults to 101 documents, like a real server), `singleBatch`, `getMore`, `killCursors`, idle timeout (`MongoFakeServerOptions.CursorTimeout`, default 10 minutes), `noCursorTimeout`; cursors are freed when the connection that opened them closes |
+| `failCommand` failpoint | `configureFailPoint` on `admin`; modes `alwaysOn`, `off`, `{times}`, `{skip}`; `failCommands`, `errorCode`, `errorLabels`, `closeConnection`, `blockConnection`/`blockTimeMS`, `writeConcernError`, `appName` |
+| Error labels | `RetryableWriteError` on retryable codes for retryable writes, `TransientTransactionError` inside transactions; duplicate-key errors carry `keyPattern`/`keyValue` |
+| `maxTimeMS` | Interrupts scans; MaxTimeMSExpired (50) |
+| Replica-set mode | `MongoFakeServerOptions.ReplicaSetName` makes `hello` report a single-node replica set primary, enabling transactions, retryable writes and change streams |
+| Transactions | `startTransaction`/`autocommit`/`txnNumber` state per session; `commitTransaction`/`abortTransaction`. No isolation, and abort does not roll back |
+| Change streams | `$changeStream` on a collection, database or cluster (`allChangesForCluster`); insert/update/replace/delete/drop/rename/dropDatabase/invalidate events; `fullDocument`, `fullDocumentBeforeChange`, `resumeAfter`/`startAfter`/`startAtOperationTime`, follow-on `$match`/`$project` stages. Replica-set mode only |
+| Namespace commands | `create`, `drop`, `dropDatabase`, `renameCollection`, `collMod` (index `expireAfterSeconds`), `listDatabases`, `listCollections` |
+| Diagnostics | `dbStats`, `collStats`, `explain` (always a `COLLSCAN` plan), `serverStatus` (connections, opcounters, network, uptime), `$currentOp`, `$documents` |
 | SCRAM-SHA-256 auth (optional) | `MongoFakeServer(backend, username:, password:)`; requires the driver to authenticate with exactly that credential — the server verifies a real SCRAM proof, it cannot accept an arbitrary password. Data commands are gated; handshake/admin commands are not. |
 
 ### Out of Scope (Explicit)
@@ -133,11 +142,11 @@ Server-only, on top of the shared filter engine:
 | `$regex` flags beyond i/m/s/x | PCRE subset only |
 | `$jsonSchema` | Schema validation; separate concern |
 | `$bits*` | Bitwise; low priority |
-| Transactions / ACID | Not applicable to a single-threaded in-memory double |
+| Transaction isolation and rollback | Transactions are accepted and tracked, but writes apply immediately and an abort keeps them |
 | Secondary-index query planning | Fixtures are small; linear scan acceptable. Single text-index support now exists for `$text` search. |
-| Replication / sharding | Not relevant for single-node test doubles |
+| Replication / sharding | Replica-set mode reports a single-node set; there are no secondaries or shards |
 | Authorization (roles/privileges) | Not relevant for a single-fixture test double |
-| Cursor tailing / change streams | Not relevant for test scenarios |
+| Tailable cursors on capped collections | Capped collections aren't modelled; change streams are supported |
 | Complex aggregation stages (`$facet`, `$bucket`, `$redact`, ...) | Add incrementally if needed |
 
 ### Non-Goals
@@ -155,10 +164,21 @@ Server-only, on top of the shared filter engine:
 
 - **Recognized only at top level:** `$text` is recognized only as a top-level filter key, not inside `$and`/`$or` conditions
 - **Single text index per collection:** Only one text index is permitted per collection; attempting to create a second one will error
-- **Only text indexes are tracked:** `createIndexes`/`listIndexes`/`dropIndexes` only recognize text indexes (plus the implicit `_id_` index); regular (ascending/descending/compound) index specs are accepted by `createIndexes` as a no-op and never appear in `listIndexes` or `dropIndexes`
 - **Case-insensitive, whitespace-split terms:** Search tokens are split on whitespace and matched case-insensitively against document text
 - **OR semantics:** Multiple search terms are OR'd (document matches if any term is found)
 - **Scoring:** Text score is computed as the sum of term occurrence counts across indexed fields; exact weighting differs from MongoDB but is monotonic and deterministic
+
+#### Cursors
+
+- **Batch size by count only:** a batch holds `batchSize` documents (101 for a first batch without one); a real server also caps each batch at 16 MB. A `getMore` without `batchSize` returns everything left.
+- **Last batch closes the cursor:** the batch that empties a cursor comes back with cursor id 0.
+- **Connection-scoped:** a cursor is killed when the connection that opened it closes. A real server keeps it until it times out, but a `getMore` from another connection still works here.
+
+#### Change streams
+
+- **Recording starts with the first stream:** the server keeps no write log until a change stream is opened, so a stream can't resume to before the first one opened. The log holds the last 100,000 events; resuming from further back fails with ChangeStreamHistoryLost (286).
+- **`updateDescription` is top level:** a change inside a subdocument is reported as the whole top-level field.
+- **`updateLookup`** returns the document as the update left it, not as it is when the event is read.
 
 #### `$setWindowFields`
 
@@ -634,33 +654,35 @@ On connection, the client sends `hello`/`isMaster`. The server responds:
 ```csharp
 new BsonDocument
 {
-    { "ok", 1.0 },
+    { "helloOk", true },
     { "isWritablePrimary", true },
     { "ismaster", true },
-    { "helloOk", true },
-    { "maxWireVersion", 17 },
-    { "minWireVersion", 0 },
+    { "topologyVersion", { processId, counter: 0 } },
+    // Replica-set mode only: hosts, setName, setVersion, secondary, primary, me, electionId, lastWrite
     { "maxBsonObjectSize", 16777216 },
     { "maxMessageSizeBytes", 48000000 },
     { "maxWriteBatchSize", 100000 },
     { "localTime", DateTime.UtcNow },
     { "logicalSessionTimeoutMinutes", 30 },
-    { "connectionId", <atomic-counter> },
-    { "readOnly", false }
+    { "connectionId", <per-connection id> },
+    { "minWireVersion", 0 },
+    { "maxWireVersion", 17 },
+    { "readOnly", false },
+    { "ok", 1.0 }
 }
 ```
 
 ### Response Format
 
-All responses are OP_MSG frames containing:
+All responses are OP_MSG frames (OP_REPLY for OP_QUERY requests). As on a real server, a success
+reply ends with `ok: 1`, and an error reply starts with it:
 
 ```csharp
-new BsonDocument
-{
-    { "ok", 1 }, // or 0 on error
-    { "result", resultArray or resultDoc },
-    // Command-specific fields
-}
+// Success
+{ <command-specific fields>, ok: 1 }
+
+// Error
+{ ok: 0, errmsg, code, codeName, [keyPattern, keyValue], [errorLabels] }
 ```
 
 ### Key Classes — Mongo.Fakes.Server
@@ -774,9 +796,8 @@ public class BsonFileBackend : IMongoBackend
     // Shared baseline (immutable)
     private readonly IBaselineDataProvider _baseline;
     
-    // Per-fixture mutation tracking
-    private readonly Dictionary<string, DocumentSnapshot> _snapshots;
-    private readonly HashSet<string> _deletedIds;
+    // Per-fixture live documents, one store per collection
+    private readonly Dictionary<(string Database, string Collection), CollectionStore> _stores;
 
     // Legacy constructor for backward compatibility
     public BsonFileBackend(string fixtureFolder);
@@ -788,7 +809,11 @@ public class BsonFileBackend : IMongoBackend
 }
 ```
 
-Each fixture instance maintains its own `_snapshots` and `_deletedIds`, enabling isolation while sharing `_baseline` across fixtures.
+Each fixture instance maintains its own `_stores`, enabling isolation while sharing `_baseline` across fixtures.
+A `CollectionStore` is created the first time a collection is touched: it references the baseline documents
+(no copy) and from then on holds the collection's live documents in natural order, keyed by `_id`, along with
+the key maps of its unique indexes. Inserts, updates and deletes go through the store, so the `_id` and unique
+checks see fixture and inserted documents alike, and a delete frees its keys.
 
 #### `BsonQueryExecutor`
 
@@ -946,9 +971,9 @@ Baseline Data (shared, file-backed)
 IBaselineDataProvider (read-only interface)
   ↓
 Per-Fixture BsonFileBackend Instance
-  ├─ DocumentSnapshot tracking (mutations only)
-  ├─ Deleted IDs set (logical deletes)
-  └─ Mutations dictionary (modified documents)
+  └─ CollectionStore per touched collection
+       ├─ Live documents (DocumentSnapshot per _id, natural order)
+       └─ Unique-index key maps (key → owning _id)
 ```
 
 #### How It Works
@@ -972,7 +997,7 @@ Per-Fixture BsonFileBackend Instance
 
 5. **Write Operations**: On first mutation, create a copy and store it in `Mutated`; subsequent operations modify the copy.
 
-6. **Delete Operations**: Track deleted document IDs separately; they're filtered from reads.
+6. **Delete Operations**: Remove the document from the collection's store, along with its unique-index keys.
 
 7. **Teardown**: Mutations are naturally garbage-collected when the fixture's `BsonFileBackend` is disposed.
 
@@ -983,16 +1008,18 @@ Per-Fixture BsonFileBackend Instance
 - **Naive cloning:** 1000 × 100 MB = 100 GB ❌
 - **CoW approach:** 100 MB baseline + ~1 MB mutations (per 10-20 fixture mutations) = ~101-102 MB ✅
 
-**Per-document key:** Document identity is based on `_id` JSON representation, supporting any BSON type (ObjectId, string, integer, etc.).
+**Per-document key:** Document identity is the `_id` value, compared like a real index key: any BSON type is supported, and numerically equal values (`1`, `1L`, `1.0`) are the same key.
+
+**Unique indexes:** enforced on insert, update, upsert and `findAndModify`, with `sparse`, `partialFilterExpression`, dotted paths and multikey (array) fields. Creating a unique index over existing duplicates fails with E11000. Duplicate-key errors carry `keyPattern` and `keyValue`.
 
 #### Supported Operations
 
 | Operation | Behavior |
 |-----------|----------|
 | Reads | Return current document (original or mutated) |
-| Insert | Add new document to snapshot tracking |
-| Update | Create mutated copy on first write |
-| Delete | Mark document as deleted (filtered from reads) |
+| Insert | Add the document to the store (E11000 on a duplicate `_id` or unique key) |
+| Update | Store the new version of the document as its `Mutated` copy |
+| Delete | Remove the document from the store |
 | Aggregate/Filter | Use current version of each document |
 
 #### Snapshot Naming and Tracking

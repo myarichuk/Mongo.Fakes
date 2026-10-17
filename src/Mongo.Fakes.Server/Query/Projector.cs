@@ -93,7 +93,11 @@ internal sealed class Projector
         }
         else
         {
-            result = new BsonDocument(doc);
+            // A shallow copy shares subdocuments with the stored document, so a dotted path
+            // would be removed from the stored document too; deep-copy only in that case.
+            result = _projectionSpec.Names.Any(n => n.Contains('.'))
+                ? (BsonDocument)doc.DeepClone()
+                : new BsonDocument(doc);
 
             foreach (var element in _projectionSpec.Elements)
             {

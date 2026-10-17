@@ -52,12 +52,13 @@ internal sealed class AggregationPipeline
             };
         }
 
-        // Strip hidden text score field as final step
+        // Strip hidden text score field as final step. Only text search adds it, on a clone,
+        // so documents without it are passed through uncopied.
         current = current.Select(d =>
         {
-            var doc = (BsonDocument)d.DeepClone();
-            doc.Remove(Query.TextSearchFilter.ScoreField);
-            return doc;
+            if (d.Contains(Query.TextSearchFilter.ScoreField))
+                d.Remove(Query.TextSearchFilter.ScoreField);
+            return d;
         });
 
         return current;

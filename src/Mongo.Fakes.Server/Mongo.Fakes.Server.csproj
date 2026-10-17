@@ -18,6 +18,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Mongo.Fakes.Server.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 

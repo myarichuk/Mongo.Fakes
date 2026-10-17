@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using Mongo.Fakes.Core;
+using Mongo.Fakes.Server.Errors;
 
 namespace Mongo.Fakes.Server.Update;
 
@@ -17,7 +18,7 @@ internal sealed class UpdateApplier
             switch (op)
             {
                 case "$set":
-                    ApplySet(result, (BsonDocument)spec, allowIdModification: false);
+                    ApplySet(result, (BsonDocument)spec, allowIdModification: isUpsertInsert);
                     break;
                 case "$unset":
                     ApplyUnset(result, (BsonDocument)spec, allowIdModification: false);
@@ -67,12 +68,21 @@ internal sealed class UpdateApplier
         return result;
     }
 
+    private static MongoCommandException ImmutableId() =>
+        new(ErrorCodes.ImmutableField, "ImmutableField",
+            "Performing an update on the path '_id' would modify the immutable field '_id'");
+
     private static void ApplySet(BsonDocument doc, BsonDocument spec, bool allowIdModification = false)
     {
         foreach (var element in spec.Elements)
         {
             if (element.Name == "_id" && !allowIdModification)
-                throw new NotSupportedException("Cannot modify _id field");
+            {
+                // Setting _id to the value it already has is allowed.
+                if (doc.TryGetValue("_id", out var currentId) && Query.BsonKeyComparer.Instance.Equals(currentId, element.Value))
+                    continue;
+                throw ImmutableId();
+            }
 
             BsonPath.SetValueByPath(doc, element.Name, element.Value);
         }
@@ -83,7 +93,7 @@ internal sealed class UpdateApplier
         foreach (var element in spec.Elements)
         {
             if (element.Name == "_id" && !allowIdModification)
-                throw new NotSupportedException("Cannot modify _id field");
+                throw ImmutableId();
 
             BsonPath.RemoveValueByPath(doc, element.Name);
         }
@@ -94,7 +104,7 @@ internal sealed class UpdateApplier
         foreach (var element in spec.Elements)
         {
             if (element.Name == "_id" && !allowIdModification)
-                throw new NotSupportedException("Cannot modify _id field");
+                throw ImmutableId();
 
             var current = BsonPath.GetValue(doc, element.Name);
             if (current == null || current.BsonType == BsonType.Null)
@@ -121,7 +131,7 @@ internal sealed class UpdateApplier
         foreach (var element in spec.Elements)
         {
             if (element.Name == "_id" && !allowIdModification)
-                throw new NotSupportedException("Cannot modify _id field");
+                throw ImmutableId();
 
             var current = BsonPath.GetValue(doc, element.Name);
             if (current == null || current.BsonType == BsonType.Null)
@@ -146,7 +156,7 @@ internal sealed class UpdateApplier
         foreach (var element in spec.Elements)
         {
             if (element.Name == "_id" && !allowIdModification)
-                throw new NotSupportedException("Cannot modify _id field");
+                throw ImmutableId();
 
             var current = BsonPath.GetValue(doc, element.Name);
             if (current == null || current.BsonType == BsonType.Null)

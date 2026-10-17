@@ -47,12 +47,13 @@ public sealed class BsonQueryExecutor
             results = results.Select(d => projector.Project(d));
         }
 
-        // Strip hidden text score field before returning
+        // Strip hidden text score field before returning. Only text search adds it, and it does so
+        // on a clone, so stored documents pass through as they are, with no copy.
         results = results.Select(d =>
         {
-            var doc = (BsonDocument)d.DeepClone();
-            doc.Remove(TextSearchFilter.ScoreField);
-            return doc;
+            if (d.Contains(TextSearchFilter.ScoreField))
+                d.Remove(TextSearchFilter.ScoreField);
+            return d;
         });
 
         return results;

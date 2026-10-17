@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 
 namespace Mongo.Fakes.Server.Wire;
 
@@ -45,43 +44,31 @@ internal sealed class OpQueryMessage
         if (offset + queryLength > span.Length)
             throw new InvalidOperationException("Incomplete query document.");
 
-        byte[] queryBytes = new byte[queryLength];
-        span.Slice(offset, queryLength).CopyTo(queryBytes);
-        using (var stream = new MemoryStream(queryBytes))
+        using (var stream = BsonWire.OpenRead(data))
         {
-            msg.Query = BsonSerializer.Deserialize<BsonDocument>(stream);
+            msg.Query = BsonWire.ReadDocument(stream, offset);
         }
 
         return msg;
     }
 
-    public static byte[] BuildReply(BsonDocument body, int responseTo, int requestId)
+    /// <summary>Writes an OP_REPLY into <paramref name="output"/>, replacing its contents.</summary>
+    public static void WriteReply(MemoryStream output, BsonDocument body, int responseTo, int requestId)
     {
-        var bodyBytes = body.ToBson();
-        int messageLength = 36 + bodyBytes.Length;
+        const int prefixLength = 36;
+        output.SetLength(0);
 
-        byte[] message = new byte[messageLength];
-        var span = message.AsSpan();
+        Span<byte> prefix = stackalloc byte[prefixLength];
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(4, 4), requestId);
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(8, 4), responseTo);
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(12, 4), (int)OpCode.Reply);
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(16, 4), 8); // responseFlags: AwaitCapable
+        BinaryPrimitives.WriteInt64LittleEndian(prefix.Slice(20, 8), 0); // cursorId
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(28, 4), 0); // startingFrom
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(32, 4), 1); // numberReturned
+        output.Write(prefix);
 
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(0, 4), messageLength);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(4, 4), requestId);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(8, 4), responseTo);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(12, 4), (int)OpCode.Reply);
-
-        int responseFlags = 8;
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(16, 4), responseFlags);
-
-        long cursorId = 0;
-        BinaryPrimitives.WriteInt64LittleEndian(span.Slice(20, 8), cursorId);
-
-        int startingFrom = 0;
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(28, 4), startingFrom);
-
-        int numberReturned = 1;
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(32, 4), numberReturned);
-
-        Buffer.BlockCopy(bodyBytes, 0, message, 36, bodyBytes.Length);
-
-        return message;
+        BsonWire.WriteDocument(output, body);
+        BinaryPrimitives.WriteInt32LittleEndian(output.GetBuffer().AsSpan(0, 4), (int)output.Length);
     }
 }

@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 
 namespace Mongo.Fakes.Server.Wire;
 
@@ -12,10 +11,18 @@ internal sealed class OpMsgMessage
     public BsonDocument Body { get; private set; } = new();
     public bool MoreToCome { get; private set; }
 
+    /// <summary>
+    /// Reads only the moreToCome flag, so an error path can decide whether to reply
+    /// without parsing the message again.
+    /// </summary>
+    public static bool ReadMoreToCome(ReadOnlySpan<byte> data) =>
+        data.Length >= FlagBitsSize && (BinaryPrimitives.ReadUInt32LittleEndian(data) & 0x02) != 0;
+
     public static OpMsgMessage Parse(ReadOnlyMemory<byte> data)
     {
         var msg = new OpMsgMessage();
         var span = data.Span;
+        using var stream = BsonWire.OpenRead(data);
         int offset = 0;
 
         if (offset + FlagBitsSize > span.Length)
@@ -53,12 +60,7 @@ internal sealed class OpMsgMessage
                 if (offset - 4 + docLength > span.Length)
                     throw new InvalidOperationException("Incomplete kind-0 document.");
 
-                byte[] docBytes = new byte[docLength];
-                span.Slice(offset - 4, docLength).CopyTo(docBytes);
-                using (var stream = new MemoryStream(docBytes))
-                {
-                    msg.Body = BsonSerializer.Deserialize<BsonDocument>(stream);
-                }
+                msg.Body = BsonWire.ReadDocument(stream, offset - 4);
 
                 offset += docLength - 4;
             }
@@ -99,12 +101,7 @@ internal sealed class OpMsgMessage
                     if (offset + docLength > sectionEnd)
                         throw new InvalidOperationException("Incomplete document in kind-1 section.");
 
-                    byte[] docBytes = new byte[docLength];
-                    span.Slice(offset, docLength).CopyTo(docBytes);
-                    using (var stream = new MemoryStream(docBytes))
-                    {
-                        docs.Add(BsonSerializer.Deserialize<BsonDocument>(stream));
-                    }
+                    docs.Add(BsonWire.ReadDocument(stream, offset));
 
                     offset += docLength;
                 }
@@ -120,26 +117,21 @@ internal sealed class OpMsgMessage
         return msg;
     }
 
-    public static byte[] BuildReply(BsonDocument body, int responseTo, int requestId)
+    /// <summary>Writes an OP_MSG reply into <paramref name="output"/>, replacing its contents.</summary>
+    public static void WriteReply(MemoryStream output, BsonDocument body, int responseTo, int requestId)
     {
-        var bodyBytes = body.ToBson();
-        int messageLength = 16 + 4 + 1 + bodyBytes.Length;
+        const int prefixLength = 16 + FlagBitsSize + 1;
+        output.SetLength(0);
 
-        byte[] message = new byte[messageLength];
-        var span = message.AsSpan();
+        Span<byte> prefix = stackalloc byte[prefixLength];
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(4, 4), requestId);
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(8, 4), responseTo);
+        BinaryPrimitives.WriteInt32LittleEndian(prefix.Slice(12, 4), (int)OpCode.Msg);
+        BinaryPrimitives.WriteUInt32LittleEndian(prefix.Slice(16, 4), 0); // flag bits
+        prefix[20] = 0; // section kind 0: body
+        output.Write(prefix);
 
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(0, 4), messageLength);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(4, 4), requestId);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(8, 4), responseTo);
-        BinaryPrimitives.WriteInt32LittleEndian(span.Slice(12, 4), (int)OpCode.Msg);
-
-        uint flagBits = 0;
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(16, 4), flagBits);
-
-        byte kind0 = 0;
-        span[20] = kind0;
-        Buffer.BlockCopy(bodyBytes, 0, message, 21, bodyBytes.Length);
-
-        return message;
+        BsonWire.WriteDocument(output, body);
+        BinaryPrimitives.WriteInt32LittleEndian(output.GetBuffer().AsSpan(0, 4), (int)output.Length);
     }
 }

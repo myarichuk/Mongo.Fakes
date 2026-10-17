@@ -11,17 +11,30 @@ namespace Mongo.Fakes.Server;
 /// username/password. A test connecting with a <c>MongoCredential</c> must use these same
 /// values — a fake server cannot verify an arbitrary password it was never told.
 /// </param>
-public sealed class MongoFakeServer(IMongoBackend backend, int port = 0, string? username = null, string? password = null) : IAsyncDisposable
+/// <param name="options">Cursor timeout, replica-set mode and other behaviour; defaults when null.</param>
+public sealed class MongoFakeServer(IMongoBackend backend, int port = 0, string? username = null, string? password = null, MongoFakeServerOptions? options = null) : IAsyncDisposable
 {
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
     private readonly ConcurrentDictionary<Guid, Task> _clientTasks = new();
-    private readonly CommandRouter _router = new(backend, username != null ? new ScramCredential(username, password ?? throw new ArgumentException("password is required when username is set", nameof(password))) : null);
+    private readonly CommandRouter _router = new(
+        backend,
+        username != null ? new ScramCredential(username, password ?? throw new ArgumentException("password is required when username is set", nameof(password))) : null,
+        options);
+
+    public MongoFakeServer(IMongoBackend backend, MongoFakeServerOptions options, int port = 0)
+        : this(backend, port, null, null, options)
+    {
+    }
 
     public IMongoBackend Backend { get; } = backend;
     public int Port { get; private set; } = port;
+    public MongoFakeServerOptions Options { get; } = options ?? new MongoFakeServerOptions();
     public string ConnectionString => $"mongodb://127.0.0.1:{Port}/?directConnection=true";
+
+    /// <summary>Server-side cursors currently open, including ones a client abandoned that haven't timed out yet.</summary>
+    public int OpenCursorCount => _router.Cursors.OpenCursorCount;
 
     public async Task StartAsync(CancellationToken ct = default)
     {
@@ -29,6 +42,7 @@ public sealed class MongoFakeServer(IMongoBackend backend, int port = 0, string?
         _listener.Start();
 
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        _router.Port = Port;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _acceptLoopTask = AcceptLoopAsync(_cts.Token);

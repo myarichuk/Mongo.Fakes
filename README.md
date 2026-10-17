@@ -29,7 +29,7 @@ wire-protocol double.
 
 **Choose Mongo.Fakes if:** Your tests don't use unsupported operators, you want instant startup, and you're testing driver integration paths rather than advanced MongoDB features.
 
-**Choose EphemeralMongo/Testcontainers if:** You need 100% MongoDB compatibility or are testing features like transactions, geospatial queries, or complex aggregations.
+**Choose EphemeralMongo/Testcontainers if:** You need 100% MongoDB compatibility or are testing features like transaction isolation and rollback, geospatial queries, or complex aggregations.
 
 ## Status
 
@@ -190,6 +190,47 @@ using (var uploadStream = await bucket.OpenUploadStreamAsync("data.bin"))
 ```
 
 GridFS works transparently by using the existing `insert`, `find`, `update`, and `delete` command support — no bucket-specific code is needed. Files spanning multiple chunks are handled automatically.
+
+### Server Options, Fault Injection and Replica-Set Mode
+
+Pass `MongoFakeServerOptions` to change how the server behaves:
+
+```csharp
+var server = new MongoFakeServer(backend, new MongoFakeServerOptions
+{
+    // Report a single-node replica set, so the driver allows transactions,
+    // retryable writes and change streams.
+    ReplicaSetName = "rs0",
+
+    // Reap idle cursors sooner than the real server's 10 minutes, to test expiry.
+    CursorTimeout = TimeSpan.FromSeconds(1)
+});
+```
+
+The `failCommand` failpoint works as it does on a real server started with test commands enabled.
+Use it to test error handling, retries, network errors and slow commands:
+
+```csharp
+await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument
+{
+    { "configureFailPoint", "failCommand" },
+    { "mode", new BsonDocument("times", 1) },     // or "alwaysOn", "off", { skip: n }
+    { "data", new BsonDocument
+    {
+        { "failCommands", new BsonArray { "insert" } },
+        { "errorCode", 10107 },                    // NotWritablePrimary: retried by the driver
+        // { "closeConnection", true },            // drop the connection instead
+        // { "blockConnection", true }, { "blockTimeMS", 500 },  // or delay the command
+    }}
+});
+```
+
+Also supported: server-side cursors (`batchSize`, `getMore`, `killCursors`, idle timeout,
+`noCursorTimeout`); `maxTimeMS`; error labels and `keyPattern`/`keyValue` on duplicate keys;
+transactions and change streams in replica-set mode; `drop`, `dropDatabase`, `renameCollection`,
+`collMod`, `dbStats`, `collStats`, `explain`, `serverStatus`, `$currentOp` and `$documents`.
+Transactions are tracked but not isolated: writes apply immediately and an abort keeps them. See
+[`docs/SPEC.md`](docs/SPEC.md) for the details and limits.
 
 ## Performance: Copy-on-Write (CoW) Fixture Isolation
 

@@ -25,7 +25,8 @@ public record IndexSpec(
     IndexType Type,
     bool Unique = false,
     bool Sparse = false,
-    int? ExpireAfterSeconds = null)
+    int? ExpireAfterSeconds = null,
+    BsonDocument? PartialFilterExpression = null)
 {
 
     /// <summary>
@@ -48,6 +49,9 @@ public record IndexSpec(
         {
             expireAfterSeconds = eVal.ToInt32();
         }
+        BsonDocument? partialFilter = indexDoc.TryGetValue("partialFilterExpression", out var pVal) && pVal is BsonDocument pDoc
+            ? new BsonDocument(pDoc)
+            : null;
 
         // Determine index type and generate name
         var (indexType, generatedName) = ClassifyIndexType(keyDoc);
@@ -63,7 +67,8 @@ public record IndexSpec(
             Type: indexType,
             Unique: unique,
             Sparse: sparse,
-            ExpireAfterSeconds: expireAfterSeconds
+            ExpireAfterSeconds: expireAfterSeconds,
+            PartialFilterExpression: partialFilter
         );
     }
 
@@ -184,6 +189,9 @@ public record IndexSpec(
 
         if (ExpireAfterSeconds.HasValue)
             doc["expireAfterSeconds"] = ExpireAfterSeconds.Value;
+
+        if (PartialFilterExpression != null)
+            doc["partialFilterExpression"] = new BsonDocument(PartialFilterExpression);
 
         return doc;
     }

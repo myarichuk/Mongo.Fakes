@@ -5,12 +5,12 @@ namespace Mongo.Fakes.Server.Wire;
 
 internal sealed class WireMessageReader
 {
-    private const int HeaderSize = 16;
+    public const int HeaderSize = 16;
     private const int MaxMessageSize = 48 * 1024 * 1024;
 
-    public static async Task<MessageHeader?> ReadHeaderAsync(NetworkStream stream, CancellationToken ct)
+    /// <param name="headerBuffer">A per-connection buffer of at least <see cref="HeaderSize"/> bytes.</param>
+    public static async Task<MessageHeader?> ReadHeaderAsync(NetworkStream stream, byte[] headerBuffer, CancellationToken ct)
     {
-        byte[] headerBuffer = new byte[HeaderSize];
         try
         {
             await stream.ReadExactlyAsync(headerBuffer, 0, HeaderSize, ct).ConfigureAwait(false);
@@ -32,10 +32,9 @@ internal sealed class WireMessageReader
         return new MessageHeader(messageLength, requestId, responseTo, opCode);
     }
 
-    public static async Task<byte[]> ReadBodyAsync(NetworkStream stream, int bodyLength, CancellationToken ct)
+    /// <summary>Reads the body into <paramref name="buffer"/>, which may be larger than the body (a pooled array).</summary>
+    public static async Task ReadBodyAsync(NetworkStream stream, byte[] buffer, int bodyLength, CancellationToken ct)
     {
-        byte[] body = new byte[bodyLength];
-        await stream.ReadExactlyAsync(body, 0, body.Length, ct).ConfigureAwait(false);
-        return body;
+        await stream.ReadExactlyAsync(buffer, 0, bodyLength, ct).ConfigureAwait(false);
     }
 }
