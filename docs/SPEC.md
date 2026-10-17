@@ -1456,26 +1456,3 @@ shape than this spec's BsonValue-first, `Expression<Func<BsonDocument, bool>>` d
 each translator is adapted rather than copy-pasted. The MongoZen repo/branch is vendored
 as a temporary git submodule at `vendor/MongoZen` during porting and removed once porting
 is complete — it is a one-time reference, not a runtime or build dependency.
-
----
-
-## Document History
-
-| Version | Date | Author | Change |
-|---------|------|--------|--------|
-| 2.3 | 2026-08-27 | Michael Yarichuk | Added `DocumentSnapshot` instance naming, tracking patterns, and `DocumentSnapshotRegistry` for fixture state diagnostics; comprehensive examples for debugging fixture mutations |
-| 2.2 | 2026-08-25 | Michael Yarichuk | Implemented per-document CoW isolation for efficient multi-fixture support; added `IBaselineDataProvider`, `FileBasedBaselineProvider`, and `DocumentSnapshot` to enable shared baseline with per-fixture mutation tracking |
-| 2.1 | 2026-08-24 | Michael Yarichuk | Merged FilterCompiler + TestFixtures specs under the Mongo.Fakes name; shared filter engine between Core and Server; added `$all` and MongoZen prior-art section |
-| 2.0 | 2026-08-24 | Michael Yarichuk | BsonValue-first, Expression-based FilterCompiler rewrite |
-| 1.0 | 2026-08-23 | Michael Yarichuk | Initial TestFixtures specification |
-
----
-
-## Sign-Off
-
-**Specification Status:** Ready for Implementation
-**Approach:** BsonValue-native, Expression-compiled, single shared filter engine, ported
-operator translators from MongoZen prior art, fuzz-tested against real MongoDB
-**Next Step:** Port `ExpressionTranslators` from `vendor/MongoZen`, then implement
-`FilterCompiler` and `Mongo.Fakes.Server` skeletons per [`Mongo.Fakes` repo scaffold
-plan]
