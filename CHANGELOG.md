@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.12.0...Mongo.Fakes-v0.12.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* correctness bugs and add missing stuff that is a blocker for other projects ([779d961](https://github.com/myarichuk/Mongo.Fakes/commit/779d96134ee2143509a34d4a033732ccb7a12f7f))
+
 ## [0.12.0](https://github.com/myarichuk/Mongo.Fakes/compare/Mongo.Fakes-v0.11.2...Mongo.Fakes-v0.12.0) (2026-09-20)
 
 
